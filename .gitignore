@@ -22,6 +22,8 @@ pnpm-debug.log*
 !.env.example
 
 # Growth local state and run artifacts
+GROWTH.md
+outer-loop.md
 .growth/state.local.json
 .growth/audit.jsonl
 .growth/data/
