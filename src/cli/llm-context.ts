@@ -1,0 +1,101 @@
+/**
+ * Single command that prints schema + active experiments + connectors +
+ * state + conventions in one envelope blob. Agents call this to prime
+ * themselves with current ground truth before deciding what to do.
+ */
+import type { Command } from 'commander';
+import { wrap, type RunCtx } from '../lib/runner.js';
+import { requireInitialized } from '../lib/gating.js';
+import { Store } from '../lib/store.js';
+import { listConnectors } from '../lib/connectors.js';
+import { readShared } from '../lib/state.js';
+import { connectorSchema, eventTaxonomySchema, experimentSchema, preflightReportSchema } from '../domain/schema.js';
+import { CATALOG } from '../lib/defaults.js';
+
+const CONVENTIONS = [
+  'All commands accept --json and return a stable envelope.',
+  'Every mutation requires `growth init` first; pre-init mutations fail with code "not_initialized".',
+  'Experiment configs live in .growth/experiments/<id>.json and should be created with `growth experiment create`.',
+  'Templates live in .growth/templates/<name>.json and are partial specs merged at create time.',
+  'Connectors live in .growth/connectors/<source>.json and are validated by `growth connector validate`.',
+  '.growth/data/events.jsonl is append-only. `pull` is idempotent by idempotency_key with a stable hash fallback.',
+  '.growth/audit.jsonl logs every CLI invocation.',
+  'First variant in `variants` must be the control variant with id "control".',
+  'Use preflight before exposing onboarding or activation experiments to real users.',
+  'Never treat agent-generated traffic as real-user evidence.',
+];
+
+export function registerLlmContext(program: Command, ctx: RunCtx): void {
+  program
+    .command('llm-context')
+    .description('Prime an agent with schema, state, active configs, and conventions.')
+    .action(async () => {
+      await wrap('growth llm-context', ctx, async () => {
+        await requireInitialized(ctx.getRoot());
+        const root = ctx.getRoot();
+        const store = new Store(root);
+        const [shared, experiments, connectors, templates] = await Promise.all([
+          readShared(root),
+          store.listExperiments(),
+          listConnectors(root),
+          store.listTemplates(),
+        ]);
+        return {
+          data: {
+            framework: { name: 'growth', version: ctx.version, root },
+            state: { shared },
+            schemas: {
+              experiment: experimentSchema as unknown as Record<string, unknown>,
+              connector: connectorSchema as unknown as Record<string, unknown>,
+              event_taxonomy: eventTaxonomySchema as unknown as Record<string, unknown>,
+              preflight_report: preflightReportSchema as unknown as Record<string, unknown>,
+            },
+            catalog: CATALOG,
+            commands: [
+              'growth status --json',
+              'growth schema experiment --json',
+              'growth experiment create <id> --template conversion-test --json',
+              'growth instrumentation plan <id> --json',
+              'growth instrumentation verify <id> --json',
+              'growth preflight prepare <id> --agents 4 --browser --json',
+              'growth preflight pull <run_id> --source local --json',
+              'growth preflight audit <run_id> --json',
+              'growth pull <id> --source posthog --after <iso> --json',
+              'growth analyze <id> --segment real-users --json',
+            ],
+            experiments: experiments.map((e) => ({
+              id: e.id,
+              name: e.name,
+              status: e.status,
+              hypothesis: e.hypothesis,
+              variants: e.variants.map((v) => v.id),
+              metrics: e.metrics.map((m) => ({
+                id: m.id,
+                role: m.role,
+                event: m.event,
+                denominator_event: m.denominator_event,
+              })),
+              started_at: e.started_at,
+            })),
+            connectors: connectors.map((c) => ({
+              source: c.source,
+              kind: c.kind,
+              mapped_events: Object.keys(c.mappings),
+            })),
+            templates,
+            conventions: CONVENTIONS,
+          },
+          next:
+            experiments.length > 0
+              ? {
+                  command: `growth instrumentation verify ${experiments[0].id} --json`,
+                  until: 'active experiment instrumentation is verified before preflight',
+                }
+              : {
+                  command: 'growth experiment create onboarding-flow --template onboarding-activation --json',
+                  until: 'an onboarding/activation experiment exists',
+                },
+        };
+      });
+    });
+}
