@@ -34,3 +34,13 @@ npm run dev -- experiments create --json
 ```sh
 npm test
 ```
+
+## Local Dogfood
+
+Run the low-cost fixture loop without external providers:
+
+```sh
+npm run dogfood:local
+```
+
+The harness copies small apps from `examples/fixtures/`, drives the CLI from inspection through experiment spec, instrumentation verification, preflight pull, and audit, then writes evidence under `outerloop/runs/local-dogfood-*`.

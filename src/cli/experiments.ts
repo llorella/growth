@@ -130,7 +130,7 @@ export function registerExperiments(program: Command, ctx: RunCtx): void {
           data: { experiments: summary },
           humanText:
             summary.length === 0
-              ? 'No experiments. Run `growth experiment create <id> --template <name>`.'
+              ? 'No experiments. Run `growth schema experiment --json`, then create one with `growth experiment create <id> --from-file <spec.json>` or an explicit template.'
               : summary.map((s) => `  ${s.status.padEnd(10)} ${s.id.padEnd(40)} ${s.name}`).join('\n'),
         };
       });

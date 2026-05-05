@@ -1,0 +1,86 @@
+{
+  "agents": 4,
+  "experiment": {
+    "id": "workspace-onboarding",
+    "name": "Workspace onboarding clarity",
+    "hypothesis": "We believe clarifying the workspace setup path will increase activation because users can identify the first useful action without contacting support.",
+    "status": "draft",
+    "variants": [
+      { "id": "control", "name": "Control", "weight": 50 },
+      { "id": "treatment", "name": "Checklist first", "weight": 50 }
+    ],
+    "metrics": [
+      {
+        "id": "activation_rate",
+        "name": "Activation rate",
+        "role": "primary",
+        "type": "proportion",
+        "direction": "higher_is_better",
+        "event": "activation_completed",
+        "denominator_event": "onboarding_started"
+      },
+      {
+        "id": "support_click_rate",
+        "name": "Support click rate",
+        "role": "guardrail",
+        "type": "proportion",
+        "direction": "lower_is_better",
+        "event": "support_or_help_clicked",
+        "denominator_event": "onboarding_started",
+        "guardrail_threshold": 0.2
+      }
+    ],
+    "targeting": { "rules": [], "segments": ["new-workspaces"] },
+    "sample_size": {
+      "baseline_rate": 0.25,
+      "minimum_detectable_effect": 0.15,
+      "power": 0.8,
+      "alpha": 0.05
+    },
+    "schedule": { "max_duration_days": 30, "min_runtime_days": 7 },
+    "instrumentation": {
+      "assignment": {
+        "stable_by": "user_id",
+        "properties": ["experiment_id", "variant_id", "user_id", "session_id"]
+      },
+      "events": [
+        {
+          "event": "onboarding_started",
+          "required_properties": ["experiment_id", "variant_id", "user_id", "session_id", "timestamp", "agent_generated", "agent_run_id"]
+        },
+        {
+          "event": "onboarding_step_viewed",
+          "required_properties": ["experiment_id", "variant_id", "user_id", "session_id", "timestamp", "agent_generated", "agent_run_id"]
+        },
+        {
+          "event": "onboarding_step_completed",
+          "required_properties": ["experiment_id", "variant_id", "user_id", "session_id", "timestamp", "agent_generated", "agent_run_id"]
+        },
+        {
+          "event": "activation_completed",
+          "required_properties": ["experiment_id", "variant_id", "user_id", "session_id", "timestamp", "agent_generated", "agent_run_id"]
+        },
+        {
+          "event": "support_or_help_clicked",
+          "required_properties": ["experiment_id", "variant_id", "user_id", "session_id", "timestamp", "agent_generated", "agent_run_id"]
+        }
+      ]
+    },
+    "preflight": {
+      "scenarios": [
+        {
+          "id": "activation_path",
+          "goal": "Start onboarding and complete the activation checklist.",
+          "instructions": ["Create or open a workspace.", "Complete the visible activation steps."],
+          "expected_events": ["onboarding_started", "onboarding_step_viewed", "onboarding_step_completed", "activation_completed"]
+        },
+        {
+          "id": "support_guardrail",
+          "goal": "Check whether help or support becomes necessary during onboarding.",
+          "instructions": ["Use the normal UI only.", "Report help usage only if the product makes it necessary."],
+          "expected_events": ["onboarding_started", "support_or_help_clicked"]
+        }
+      ]
+    }
+  }
+}

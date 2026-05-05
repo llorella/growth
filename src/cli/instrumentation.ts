@@ -6,13 +6,14 @@ import { requireInitialized } from '../lib/gating.js';
 import { Store } from '../lib/store.js';
 import { GrowthError } from '../lib/envelope.js';
 import { detectFramework, suggestedInstrumentationFiles } from '../lib/framework.js';
+import { resolveAppUrl } from '../lib/app-url.js';
 import { listConnectors, assertCoverage, type ConnectorConfig } from '../lib/connectors.js';
 import { paths } from '../lib/paths.js';
 import type { Experiment } from '../domain/types.js';
+import { scanSpaAgentContext, type SpaAgentContextScan } from '../lib/code-hints.js';
 
 const REQUIRED_EVENT_PROPERTIES = [
   'experiment_id',
-  'variant',
   'variant_id',
   'user_id',
   'session_id',
@@ -44,19 +45,27 @@ export function registerInstrumentation(program: Command, ctx: RunCtx): void {
         const contract = buildContract(exp);
         const suggestedFiles = await suggestedInstrumentationFiles(ctx.getRoot(), framework);
         const connectors = await listConnectors(ctx.getRoot());
+        const appUrl = await resolveAppUrl(ctx.getRoot(), framework);
+        const spaAgentContext = await scanSpaAgentContext(ctx.getRoot());
         return {
           data: {
             framework,
+            framework_hint: { detected: framework, advisory_only: true },
+            app_url: appUrl,
             experiment_id: exp.id,
             required_contract: contract,
+            candidate_files: suggestedFiles,
             suggested_files: suggestedFiles,
             connector_event_shapes: connectors.map(connectorEventShape),
             preflight_query_params: PREFLIGHT_QUERY_PARAMS,
+            known_pitfalls: knownPitfalls(spaAgentContext),
             reference_implementation: referenceImplementation(framework),
             prompt_packet: {
               summary: `Instrument ${exp.id} so assignments are stable and all required events include the growth properties.`,
               rules: [
+                'Inspect the repository and follow existing app conventions before choosing files to edit.',
                 'Read preflight query params before implementing assignment.',
+                'If the app uses client-side navigation, persist synthetic query params to sessionStorage before navigation strips the query string.',
                 'Emit events in the shape expected by the active connector paths.',
                 'Persist assignment and per-event idempotency keys so rerenders do not duplicate events.',
               ],
@@ -69,9 +78,15 @@ export function registerInstrumentation(program: Command, ctx: RunCtx): void {
           humanText: JSON.stringify(contract, null, 2),
           nextSteps: [
             'Edit the app to satisfy the event contract.',
+            'Treat candidate_files and framework_hint as advisory; inspect the codebase before editing.',
             'Use connector_event_shapes from the JSON output when shaping app events.',
             `Run growth instrumentation verify ${exp.id} --json.`,
+            `Use growth preflight prepare ${exp.id} --agents 4 --browser --app-url ${appUrl} --json when ready.`,
           ],
+          next: {
+            command: `growth instrumentation verify ${exp.id} --json`,
+            until: 'app instrumentation has been edited and the static contract verifies',
+          },
         };
       });
     });
@@ -111,7 +126,7 @@ export function registerInstrumentation(program: Command, ctx: RunCtx): void {
 
   instrumentation
     .command('verify <experiment_id>')
-    .description('Verify available static contracts, taxonomy, and connector mappings.')
+    .description('Verify experiment instrumentation contracts, connector mappings, and optional emitted events.')
     .option('--endpoint <url>', 'POST sample events to a local event endpoint.')
     .option('--events-file <path>', 'Read actual app-emitted JSONL events and verify the required event contract.')
     .action(async (experimentId: string, opts: { endpoint?: string; eventsFile?: string }) => {
@@ -122,6 +137,7 @@ export function registerInstrumentation(program: Command, ctx: RunCtx): void {
         const exp = await store.getExperiment(experimentId);
         if (!exp) throw new GrowthError('not_found', `Experiment "${experimentId}" not found.`);
         const framework = await detectFramework(root);
+        const appUrl = await resolveAppUrl(root, framework);
         const suggestedFiles = await suggestedInstrumentationFiles(root, framework);
         const existingSuggestedFiles = [];
         for (const file of suggestedFiles) {
@@ -133,22 +149,9 @@ export function registerInstrumentation(program: Command, ctx: RunCtx): void {
           }
         }
         const taxonomy = await readTaxonomyEvents(root);
-        const missingFromTaxonomy = requiredEvents(exp).filter((event) => !taxonomy.has(event));
+        const taxonomyUnlistedEvents = requiredEvents(exp).filter((event) => !taxonomy.has(event));
         const connectors = await listConnectors(root);
-        const warnings = [
-          ...missingFromTaxonomy.map((event) => ({
-            code: 'EVENT_NOT_IN_TAXONOMY',
-            message: `${event} is required by ${exp.id} but not listed in .growth/event-taxonomy.json.`,
-          })),
-          ...(existingSuggestedFiles.length === 0
-            ? [
-                {
-                  code: 'NO_SUGGESTED_FILES_FOUND',
-                  message: 'None of the framework-suggested instrumentation files exist yet.',
-                },
-              ]
-            : []),
-        ];
+        const warnings = [];
         let connectorCoverageOk = true;
         try {
           assertCoverage([exp], connectors);
@@ -166,6 +169,9 @@ export function registerInstrumentation(program: Command, ctx: RunCtx): void {
           : undefined;
         const actualEventCheck = opts.eventsFile
           ? await verifyEventsFile(root, opts.eventsFile, requiredEventSpecs(exp))
+          : undefined;
+        const instrumentationRun = actualEventCheck
+          ? await writeInstrumentationRun(root, exp.id, opts.eventsFile!, actualEventCheck)
           : undefined;
         if (endpointCheck && !endpointCheck.ok) {
           warnings.push(
@@ -190,7 +196,6 @@ export function registerInstrumentation(program: Command, ctx: RunCtx): void {
           );
         }
         const ok =
-          missingFromTaxonomy.length === 0 &&
           connectorCoverageOk &&
           (endpointCheck ? endpointCheck.ok : true) &&
           (actualEventCheck ? actualEventCheck.ok : true);
@@ -198,12 +203,15 @@ export function registerInstrumentation(program: Command, ctx: RunCtx): void {
           data: {
             experiment_id: exp.id,
             framework,
+            framework_hint: { detected: framework, advisory_only: true },
             required_events: requiredEvents(exp),
+            candidate_files: suggestedFiles,
             existing_suggested_files: existingSuggestedFiles,
-            missing_from_taxonomy: missingFromTaxonomy,
+            taxonomy_unlisted_events: taxonomyUnlistedEvents,
             connector_coverage_ok: connectorCoverageOk,
             endpoint_check: endpointCheck,
             actual_event_check: actualEventCheck,
+            instrumentation_run: instrumentationRun,
             ok,
           },
           warnings,
@@ -211,18 +219,17 @@ export function registerInstrumentation(program: Command, ctx: RunCtx): void {
             ? `Instrumentation contract for ${exp.id} is statically verifiable.`
             : `Instrumentation contract for ${exp.id} has warnings.`,
           nextSteps:
-            missingFromTaxonomy.length ||
             !connectorCoverageOk ||
             (endpointCheck && !endpointCheck.ok) ||
             (actualEventCheck && !actualEventCheck.ok)
               ? [
-                  'Update .growth/event-taxonomy.json and connector mappings as needed.',
+                  'Update connector mappings or app-emitted event payloads as needed.',
                   `Run growth instrumentation verify ${exp.id} --json again.`,
                 ]
-              : [`Run growth preflight prepare ${exp.id} --agents 4 --browser --json`],
+              : [`Run growth preflight prepare ${exp.id} --agents 4 --browser --app-url ${appUrl} --json`],
           next: ok
             ? {
-                command: `growth preflight prepare ${exp.id} --agents 4 --browser --json`,
+                command: `growth preflight prepare ${exp.id} --agents 4 --browser --app-url ${appUrl} --json`,
                 until: 'browser-agent packets are prepared for pre-launch validation',
               }
             : {
@@ -238,7 +245,7 @@ function buildContract(exp: Experiment) {
   return {
     assignment: exp.instrumentation?.assignment ?? {
       stable_by: 'user_id',
-      properties: ['experiment_id', 'variant', 'variant_id', 'user_id'],
+      properties: ['experiment_id', 'variant_id', 'user_id'],
     },
     events: requiredEventSpecs(exp),
     agent_traffic: {
@@ -273,7 +280,7 @@ const PREFLIGHT_QUERY_PARAMS = [
 
 function connectorEventShape(connector: ConnectorConfig) {
   const sample: Record<string, unknown> = {};
-  if (connector.event_name_path === 'event') sample.event = 'onboarding_started';
+  if (connector.event_name_path === 'event') sample.event = 'experiment_viewed';
   if (connector.timestamp_path === 'timestamp') sample.timestamp = new Date().toISOString();
   const properties: Record<string, unknown> = {};
   const addPathSample = (dotPath: string | undefined, value: unknown) => {
@@ -303,23 +310,75 @@ function connectorEventShape(connector: ConnectorConfig) {
 }
 
 function referenceImplementation(framework: string) {
+  const sharedNotes = [
+    'Use `variant_id` as the canonical emitted event property. The URL query param is still named `variant` because it forces assignment for a synthetic packet.',
+    'If a connector requires a legacy `variant` property, emit it as an alias with the same value as `variant_id`.',
+  ];
   if (framework === 'nextjs-app-router') {
     return {
+      advisory_only: true,
       skill_reference: '.agents/skills/growth/references/nextjs-app-router.md',
       notes: [
         'Read URL params agent_generated, agent_run_id, experiment_id, and variant before hashing assignment.',
+        'Persist synthetic query params to sessionStorage before Link/router navigation removes them.',
         'Only reset synthetic per-event dedupe when agent_run_id changes.',
         'Emit PostHog-style envelopes when using the local connector: { event, properties: { ... } }.',
+        ...sharedNotes,
+      ],
+    };
+  }
+  if (framework === 'react-vite') {
+    return {
+      advisory_only: true,
+      skill_reference: '.agents/skills/growth/references/spa-navigation.md',
+      notes: [
+        'React Router Link/NavLink/useNavigate calls do not preserve URL query params by default.',
+        'Persist synthetic query params to sessionStorage on first page load and read from there on every event.',
+        'Emit PostHog-style envelopes when using the local connector: { event, properties: { ... } }.',
+        ...sharedNotes,
       ],
     };
   }
   return {
+    advisory_only: true,
     notes: [
       'Persist assignment by stable id.',
       'Attach preflight query params to every synthetic event.',
       'Emit event payloads that match connector_event_shapes.',
+      ...sharedNotes,
     ],
   };
+}
+
+interface InstrumentationPitfall {
+  id: string;
+  applies_to: string;
+  message: string;
+  fix: string;
+  evidence?: unknown;
+}
+
+function knownPitfalls(spaAgentContext: SpaAgentContextScan): InstrumentationPitfall[] {
+  const pitfalls: InstrumentationPitfall[] = [
+    {
+      id: 'variant-field-duality',
+      applies_to: 'all',
+      message:
+        '`variant_id` is the canonical event property. The preflight URL query param is named `variant` only to force synthetic assignment.',
+      fix: 'Emit properties.variant_id on every event; optionally emit properties.variant as an alias only for legacy connector compatibility.',
+    },
+  ];
+  if (spaAgentContext.uses_client_navigation) {
+    pitfalls.unshift({
+      id: 'spa-query-string-navigation',
+      applies_to: 'client-navigation-detected',
+      message:
+        'Client-side navigation often drops ?agent_generated, ?agent_run_id, ?experiment_id, and ?variant from the URL.',
+      fix: 'Read preflight query params once, persist them to sessionStorage, and attach the persisted values to every emitted event.',
+      evidence: spaAgentContext,
+    });
+  }
+  return pitfalls;
 }
 
 function requiredEvents(exp: Experiment): string[] {
@@ -371,13 +430,6 @@ function sampleProperties(exp: Experiment, spec: RequiredEventSpec): Record<stri
     agent_generated: false,
     agent_run_id: null,
     assignment_id: `assign_${exp.id}_sample`,
-    onboarding_step: 'workspace',
-    url_path: '/onboarding',
-    goal: 'launch',
-    workspace_name_present: true,
-    invite_count: 1,
-    completion_next_action: 'open_dashboard',
-    error_code: null,
     value: 1,
   };
   const out: Record<string, unknown> = {};
@@ -460,6 +512,43 @@ async function verifyEventsFile(root: string, file: string, specs: RequiredEvent
     missing_properties: missingProperties,
     ok: missingEvents.length === 0 && missingProperties.length === 0,
   };
+}
+
+async function writeInstrumentationRun(
+  root: string,
+  experimentId: string,
+  eventsFile: string,
+  actualEventCheck: Awaited<ReturnType<typeof verifyEventsFile>>,
+) {
+  const p = paths(root);
+  const runId = `instrumentation_${timestampId()}`;
+  const runDir = path.join(p.runsDir, runId);
+  const resultFile = path.join(runDir, 'verify.json');
+  await fs.mkdir(runDir, { recursive: true });
+  const run = {
+    id: runId,
+    type: 'instrumentation',
+    experiment_id: experimentId,
+    status: actualEventCheck.ok ? 'completed' : 'failed',
+    created_at: new Date().toISOString(),
+    completed_at: new Date().toISOString(),
+    artifacts: {
+      events_file: path.relative(root, path.resolve(root, eventsFile)),
+      verify_result: path.relative(root, resultFile),
+    },
+    warnings: [],
+  };
+  await fs.writeFile(path.join(runDir, 'run.json'), JSON.stringify(run, null, 2) + '\n');
+  await fs.writeFile(resultFile, JSON.stringify({ actual_event_check: actualEventCheck }, null, 2) + '\n');
+  return {
+    id: runId,
+    file: path.relative(root, resultFile),
+    ok: actualEventCheck.ok,
+  };
+}
+
+function timestampId(): string {
+  return new Date().toISOString().replace(/[-:.]/g, '');
 }
 
 async function readTaxonomyEvents(root: string): Promise<Set<string>> {

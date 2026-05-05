@@ -8,6 +8,7 @@ import { Store } from '../lib/store.js';
 import { listConnectors, assertCoverage } from '../lib/connectors.js';
 import { detectFramework, suggestedInstrumentationFiles } from '../lib/framework.js';
 import { paths } from '../lib/paths.js';
+import { scanSpaAgentContext, type SpaAgentContextScan } from '../lib/code-hints.js';
 
 type CheckStatus = 'pass' | 'warn' | 'fail';
 
@@ -96,13 +97,20 @@ export function registerDoctor(program: Command, ctx: RunCtx): void {
           }
         }
         checks.push({
-          name: 'instrumentation_files',
+          name: 'instrumentation_candidate_files',
           status: existingSuggestedFiles.length ? 'pass' : 'warn',
           message: existingSuggestedFiles.length
-            ? `${existingSuggestedFiles.length} suggested instrumentation file(s) exist.`
-            : 'No suggested instrumentation files found. Existing app-specific paths may still be valid.',
-          details: { framework, suggested_files: suggestedFiles, existing_suggested_files: existingSuggestedFiles },
+            ? `${existingSuggestedFiles.length} candidate instrumentation file(s) exist.`
+            : 'No candidate instrumentation files found. Existing app-specific paths may still be valid.',
+          details: {
+            framework_hint: { detected: framework, advisory_only: true },
+            candidate_files: suggestedFiles,
+            existing_candidate_files: existingSuggestedFiles,
+          },
         });
+
+        const spaCheck = await checkSpaAgentContext(await scanSpaAgentContext(root));
+        if (spaCheck) checks.push(spaCheck);
 
         const recentRuns = await listRecentRuns(root);
         checks.push({
@@ -115,6 +123,25 @@ export function registerDoctor(program: Command, ctx: RunCtx): void {
         return doctorResult(checks);
       });
     });
+}
+
+function checkSpaAgentContext(scan: SpaAgentContextScan): DoctorCheck | null {
+  if (!scan.uses_client_navigation) return null;
+  if (scan.persists_agent_context) {
+    return {
+      name: 'spa_agent_context',
+      status: 'pass',
+      message: 'SPA client navigation is present and synthetic agent context appears to be persisted.',
+      details: scan as unknown as Record<string, unknown>,
+    };
+  }
+  return {
+    name: 'spa_agent_context',
+    status: 'warn',
+    message:
+      'SPA client navigation can drop preflight query params. Persist agent_generated, agent_run_id, experiment_id, and variant to sessionStorage before tracking events.',
+    details: scan as unknown as Record<string, unknown>,
+  };
 }
 
 function doctorResult(checks: DoctorCheck[]) {

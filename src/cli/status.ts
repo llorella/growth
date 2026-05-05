@@ -59,6 +59,7 @@ export function registerStatus(program: Command, ctx: RunCtx): void {
               initialized,
               root,
               framework,
+              framework_hint: { detected: framework, advisory_only: true },
               next_command: 'growth init --json',
             },
             humanText: `growth not initialized at ${root}. Run \`growth init\`.`,
@@ -97,6 +98,7 @@ export function registerStatus(program: Command, ctx: RunCtx): void {
           initialized,
           root,
           framework,
+          framework_hint: { detected: framework, advisory_only: true },
           state: shared,
           counts: {
             experiments: experiments.length,
@@ -124,7 +126,7 @@ export function registerStatus(program: Command, ctx: RunCtx): void {
           data,
           humanText: [
             `growth at ${root}`,
-            `  framework:   ${framework}`,
+            `  framework hint: ${framework}`,
             `  experiments: ${experiments.length}`,
             `  templates:   ${templates.length}`,
             `  connectors:  ${connectors.length}`,
@@ -134,13 +136,13 @@ export function registerStatus(program: Command, ctx: RunCtx): void {
           ].join('\n'),
           nextSteps:
             experiments.length === 0
-              ? ['growth experiment create onboarding-flow --template onboarding-activation --json']
+              ? ['growth schema experiment --json', 'growth experiment create <id> --from-file <spec.json> --json']
               : ['growth llm-context --json'],
           next:
             experiments.length === 0
               ? {
-                  command: 'growth experiment create onboarding-flow --template onboarding-activation --json',
-                  until: 'an onboarding/activation experiment exists',
+                  command: 'growth schema experiment --json',
+                  until: 'an experiment spec is authored from the schema or an explicit template choice',
                 }
               : {
                   command: 'growth llm-context --json',

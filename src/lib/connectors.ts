@@ -170,9 +170,7 @@ export function mapEvent(connector: ConnectorConfig, raw: unknown): MapResult {
     : undefined;
   if (!experimentId) return { drop_reason: 'missing_experiment_id' };
 
-  const variantId = connector.variant_id_path
-    ? (readPath(raw, connector.variant_id_path) as string | undefined)
-    : undefined;
+  const variantId = readVariantId(connector, raw);
   if (!variantId) return { drop_reason: 'missing_variant_id' };
 
   const idempotencyKey = connector.idempotency_key_path
@@ -224,7 +222,7 @@ export function defaultPostHogConnector(projectId: string | number = 'POSTHOG_PR
     user_id_path: 'distinct_id',
     anonymous_id_path: 'properties.$anon_distinct_id',
     experiment_id_path: 'properties.experiment_id',
-    variant_id_path: 'properties.variant',
+    variant_id_path: 'properties.variant_id',
     event_name_path: 'event',
     timestamp_path: 'timestamp',
     idempotency_key_path: 'uuid',
@@ -235,6 +233,17 @@ export function defaultPostHogConnector(projectId: string | number = 'POSTHOG_PR
     },
     mappings: {},
   };
+}
+
+function readVariantId(connector: ConnectorConfig, raw: unknown): string | undefined {
+  const configured = connector.variant_id_path
+    ? (readPath(raw, connector.variant_id_path) as string | undefined)
+    : undefined;
+  if (configured) return configured;
+  if (connector.variant_id_path === 'properties.variant_id') {
+    return readPath(raw, 'properties.variant') as string | undefined;
+  }
+  return undefined;
 }
 
 export function defaultLocalConnector(eventsFile = 'tmp/events.jsonl'): ConnectorConfig {

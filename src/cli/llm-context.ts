@@ -11,6 +11,8 @@ import { listConnectors } from '../lib/connectors.js';
 import { readShared } from '../lib/state.js';
 import { connectorSchema, eventTaxonomySchema, experimentSchema, preflightReportSchema } from '../domain/schema.js';
 import { CATALOG } from '../lib/defaults.js';
+import { detectFramework } from '../lib/framework.js';
+import { resolveAppUrl } from '../lib/app-url.js';
 
 const CONVENTIONS = [
   'All commands accept --json and return a stable envelope.',
@@ -21,8 +23,9 @@ const CONVENTIONS = [
   '.growth/data/events.jsonl is append-only. `pull` is idempotent by idempotency_key with a stable hash fallback.',
   '.growth/audit.jsonl logs every CLI invocation.',
   'First variant in `variants` must be the control variant with id "control".',
-  'Use preflight before exposing onboarding or activation experiments to real users.',
+  'Use preflight before exposing any experiment to real users.',
   'Never treat agent-generated traffic as real-user evidence.',
+  'Built-in templates are examples; prefer the user-provided experiment intent and schema when authoring a spec.',
 ];
 
 export function registerLlmContext(program: Command, ctx: RunCtx): void {
@@ -40,9 +43,13 @@ export function registerLlmContext(program: Command, ctx: RunCtx): void {
           listConnectors(root),
           store.listTemplates(),
         ]);
+        const detectedFramework = shared?.project.framework ?? (await detectFramework(root));
+        const appUrl = await resolveAppUrl(root, detectedFramework);
         return {
           data: {
             framework: { name: 'growth', version: ctx.version, root },
+            project_hints: { framework: { detected: detectedFramework, advisory_only: true } },
+            local_servers: { app_url: appUrl },
             state: { shared },
             schemas: {
               experiment: experimentSchema as unknown as Record<string, unknown>,
@@ -54,10 +61,12 @@ export function registerLlmContext(program: Command, ctx: RunCtx): void {
             commands: [
               'growth status --json',
               'growth schema experiment --json',
-              'growth experiment create <id> --template conversion-test --json',
+              'growth experiment create <id> --from-file <spec.json> --json',
               'growth instrumentation plan <id> --json',
               'growth instrumentation verify <id> --json',
-              'growth preflight prepare <id> --agents 4 --browser --json',
+              'growth instrumentation verify <id> --events-file tmp/events.jsonl --json',
+              'growth preflight dry-run <id> --events-file tmp/events.jsonl --json',
+              `growth preflight prepare <id> --agents 4 --browser --app-url ${appUrl} --json`,
               'growth preflight pull <run_id> --source local --json',
               'growth preflight audit <run_id> --json',
               'growth pull <id> --source posthog --after <iso> --json',
@@ -92,8 +101,8 @@ export function registerLlmContext(program: Command, ctx: RunCtx): void {
                   until: 'active experiment instrumentation is verified before preflight',
                 }
               : {
-                  command: 'growth experiment create onboarding-flow --template onboarding-activation --json',
-                  until: 'an onboarding/activation experiment exists',
+                  command: 'growth schema experiment --json',
+                  until: 'an experiment spec is authored from the schema or an explicit template choice',
                 },
         };
       });

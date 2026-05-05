@@ -48,6 +48,7 @@ This is a reference shape, not a required file layout. Prefer the host app's exi
 ## Assignment
 
 - Read preflight URL params: \`agent_generated\`, \`agent_run_id\`, \`experiment_id\`, and \`variant\`.
+- In client-rendered routes, persist those params to sessionStorage before \`Link\` or router navigation removes the query string.
 - If \`variant\` is present, use it for that synthetic packet. Otherwise assign by a stable hash of the configured stable id.
 - Persist assignment in localStorage or server state with \`experiment_id\`, \`variant_id\`, \`user_id\`, optional \`anonymous_id\`, and \`agent_run_id\`.
 - Only reset synthetic per-event dedupe when \`agent_run_id\` changes. Do not clear dedupe just because \`agent_generated=true\` is still in the URL.
@@ -59,7 +60,7 @@ The built-in local connector expects PostHog-style JSONL rows:
 
 \`\`\`json
 {
-  "event": "onboarding_started",
+  "event": "experiment_viewed",
   "properties": {
     "event_id": "evt_unique_id",
     "experiment_id": "my-experiment",
@@ -86,26 +87,64 @@ growth connector validate local --json
 \`\`\`
 `;
 
+const SPA_NAVIGATION_REFERENCE = `# SPA Navigation Reference
+
+This applies to React Router, Vite SPAs, Remix client navigation, and any app where links update routes without a full page load.
+
+## Synthetic Agent Context
+
+Preflight packet URLs include \`agent_generated\`, \`agent_run_id\`, \`experiment_id\`, and \`variant\`.
+
+Client-side navigation often drops those query params. Read them once on first page load, persist them to \`sessionStorage\`, and attach the persisted values to every event.
+
+Canonical emitted event fields:
+
+- \`experiment_id\`
+- \`variant_id\`
+- \`user_id\`
+- \`session_id\`
+- \`timestamp\`
+- \`agent_generated\`
+- \`agent_run_id\`
+
+The query param is named \`variant\` because it forces the synthetic packet branch. The event property should be \`variant_id\`; emit \`variant\` only as a compatibility alias when a connector requires it.
+
+## Verification Loop
+
+Use local JSONL for the fast loop:
+
+\`\`\`bash
+growth instrumentation verify <experiment_id> --events-file tmp/events.jsonl --json
+growth preflight dry-run <experiment_id> --events-file tmp/events.jsonl --json
+\`\`\`
+
+Then run a real provider-backed preflight before launch.
+`;
+
 const WORKFLOWS: Record<string, string> = {
   'create-experiment.md': `# Create Experiment
 
 1. Run \`growth status --json\`.
 2. Run \`growth schema experiment --json\`.
-3. Run \`growth catalog templates --json\`.
-4. Create with \`growth experiment create <id> --template <template> --json\`.
-5. Confirm with \`growth experiment show <id> --json\`.
+3. Inspect the product and user goal before choosing metrics or variants.
+4. Author a spec from the schema, or use a template only when the user explicitly chooses one.
+5. Create with \`growth experiment create <id> --from-file <spec.json> --json\`.
+6. Confirm with \`growth experiment show <id> --json\`.
 `,
   'instrument-app.md': `# Instrument App
 
 1. Run \`growth instrumentation plan <id> --json\`.
-2. Read \`connector_event_shapes\`, \`preflight_query_params\`, and \`reference_implementation\` in the plan output.
+2. Read \`connector_event_shapes\`, \`preflight_query_params\`, and candidate hints in the plan output.
 3. Edit application code to satisfy the assignment, connector envelope, and event contract.
-4. Run \`growth instrumentation verify <id> --json\`.
-5. If using the local connector, run \`growth instrumentation verify <id> --events-file tmp/events.jsonl --json\`.
+4. Inspect existing app structure yourself; framework hints and candidate files are advisory.
+5. If client-side navigation is present, persist preflight query params to sessionStorage before navigation.
+6. Run \`growth instrumentation verify <id> --json\`.
+7. If local app events exist, run \`growth instrumentation verify <id> --events-file tmp/events.jsonl --json\`.
+8. Use \`growth preflight dry-run <id> --events-file tmp/events.jsonl --json\` for a fast local audit before provider preflight.
 `,
   'run-preflight.md': `# Run Preflight
 
-1. Run \`growth preflight prepare <id> --agents 4 --browser --json\`.
+1. Run \`growth preflight prepare <id> --agents 4 --browser --app-url <dev-server-url> --json\`. If omitted, growth falls back to local state or a heuristic app URL.
 2. Note \`event_window.after\`; events before that timestamp are intentionally excluded from \`growth preflight pull\`.
 3. Launch each generated packet with the available browser runner.
 4. Attach reports with \`growth preflight attach-report <run_id> --agent <n> --file <report.json> --json\`.
@@ -158,10 +197,15 @@ export async function writeSkill(root: string): Promise<{ wrote: string[] }> {
     path.join(p.agentsSkillDir, 'references', 'nextjs-app-router.md'),
     NEXTJS_APP_ROUTER_REFERENCE,
   );
+  await fs.writeFile(
+    path.join(p.agentsSkillDir, 'references', 'spa-navigation.md'),
+    SPA_NAVIGATION_REFERENCE,
+  );
   wrote.push(
     path.join(p.agentsSkillDir, 'SKILL.md'),
     path.join(p.agentsSkillDir, 'schema.md'),
     path.join(p.agentsSkillDir, 'references', 'nextjs-app-router.md'),
+    path.join(p.agentsSkillDir, 'references', 'spa-navigation.md'),
   );
   for (const [file, contents] of Object.entries(WORKFLOWS)) {
     const target = path.join(p.agentsSkillWorkflowsDir, file);

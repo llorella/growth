@@ -17,6 +17,7 @@ const tools: Array<[string, string[]]> = [
   ['growth_instrumentation_plan', ['instrumentation', 'plan']],
   ['growth_instrumentation_verify', ['instrumentation', 'verify']],
   ['growth_preflight_prepare', ['preflight', 'prepare']],
+  ['growth_preflight_dry_run', ['preflight', 'dry-run']],
   ['growth_preflight_pull', ['preflight', 'pull']],
   ['growth_preflight_audit', ['preflight', 'audit']],
   ['growth_analyze', ['analyze']],

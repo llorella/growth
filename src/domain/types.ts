@@ -81,12 +81,24 @@ export interface Experiment {
   schedule: ScheduleConfig;
   auto_stop?: AutoStopConfig;
   instrumentation?: InstrumentationContract;
+  preflight?: PreflightConfig;
   notes?: string;
   created_at: string;
   updated_at: string;
   started_at?: string;
   stopped_at?: string;
   stop_reason?: string;
+}
+
+export interface PreflightConfig {
+  scenarios?: PreflightScenario[];
+}
+
+export interface PreflightScenario {
+  id: string;
+  goal: string;
+  instructions?: string[];
+  expected_events?: string[];
 }
 
 export interface InstrumentationContract {

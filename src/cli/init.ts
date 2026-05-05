@@ -56,6 +56,7 @@ export function registerInit(program: Command, ctx: RunCtx): void {
           data: {
             root,
             framework,
+            framework_hint: { detected: framework, advisory_only: true },
             reinitialized: already,
             wrote: {
               dot: p.dot,
@@ -73,10 +74,19 @@ export function registerInit(program: Command, ctx: RunCtx): void {
             ? []
             : [
                 'growth status --json',
+                'growth schema experiment --json',
                 'growth template list --json',
-                'growth experiment create my-test --template conversion-test --json',
-                'growth instrumentation plan my-test --json',
+                'growth experiment create <id> --from-file <spec.json> --json',
               ],
+          next: already
+            ? {
+                command: 'growth status --json',
+                until: 'current growth state is inspected before making further changes',
+              }
+            : {
+                command: 'growth status --json',
+                until: 'initialized project state is inspected before authoring an experiment',
+              },
         };
       });
     });

@@ -1,0 +1,78 @@
+{
+  "agents": 4,
+  "experiment": {
+    "id": "pricing-plan-layout",
+    "name": "Pricing plan layout",
+    "hypothesis": "We believe emphasizing the recommended Growth plan will increase paid checkout because buyers can compare packages and choose the right plan faster.",
+    "status": "draft",
+    "variants": [
+      { "id": "control", "name": "Control", "weight": 50 },
+      { "id": "treatment", "name": "Recommended plan", "weight": 50 }
+    ],
+    "metrics": [
+      {
+        "id": "paid_checkout_rate",
+        "name": "Paid checkout rate",
+        "role": "primary",
+        "type": "proportion",
+        "direction": "higher_is_better",
+        "event": "checkout_completed",
+        "denominator_event": "pricing_viewed"
+      },
+      {
+        "id": "refund_request_rate",
+        "name": "Refund request rate",
+        "role": "guardrail",
+        "type": "proportion",
+        "direction": "lower_is_better",
+        "event": "refund_requested",
+        "denominator_event": "checkout_completed",
+        "guardrail_threshold": 0.1
+      }
+    ],
+    "targeting": { "rules": [], "segments": ["self-serve-buyers"] },
+    "sample_size": {
+      "baseline_rate": 0.08,
+      "minimum_detectable_effect": 0.2,
+      "power": 0.8,
+      "alpha": 0.05
+    },
+    "schedule": { "max_duration_days": 45, "min_runtime_days": 7 },
+    "instrumentation": {
+      "assignment": {
+        "stable_by": "anonymous_id",
+        "properties": ["experiment_id", "variant_id", "anonymous_id", "session_id"]
+      },
+      "events": [
+        {
+          "event": "pricing_viewed",
+          "required_properties": ["experiment_id", "variant_id", "anonymous_id", "session_id", "timestamp", "agent_generated", "agent_run_id"]
+        },
+        {
+          "event": "checkout_completed",
+          "required_properties": ["experiment_id", "variant_id", "anonymous_id", "session_id", "timestamp", "agent_generated", "agent_run_id"]
+        },
+        {
+          "event": "refund_requested",
+          "required_properties": ["experiment_id", "variant_id", "anonymous_id", "session_id", "timestamp", "agent_generated", "agent_run_id"]
+        }
+      ]
+    },
+    "preflight": {
+      "scenarios": [
+        {
+          "id": "checkout_path",
+          "goal": "View pricing, compare plans, and complete the checkout path.",
+          "instructions": ["Open pricing.", "Choose a plan through the normal UI.", "Stop at the checkout completion state."],
+          "expected_events": ["pricing_viewed", "checkout_completed"]
+        },
+        {
+          "id": "refund_guardrail",
+          "goal": "Check whether pricing creates refund confusion.",
+          "instructions": ["Use only reversible UI actions.", "Report refund indicators if they appear naturally."],
+          "expected_events": ["pricing_viewed", "refund_requested"]
+        }
+      ]
+    }
+  }
+}

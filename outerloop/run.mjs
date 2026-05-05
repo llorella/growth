@@ -245,8 +245,8 @@ function defaultBuilderPrompt() {
   return `Build a normal end-to-end SaaS app in the current directory.
 
 Requirements:
-- Build a realistic onboarding/activation SaaS app for teams.
-- Include signup/login-ish flow, workspace creation, invite step, dashboard, settings, and pricing or billing placeholder.
+- Build a realistic SaaS app with one clear user workflow that can be measured as an experiment outcome.
+- Include enough UI breadth for a real experiment: an entry surface, a primary task path, an adjacent secondary path, settings or account area, and at least one recoverable blocker or edge case.
 - Include persistent local data suitable for local development.
 - Include README with install, dev, test, and usage commands.
 - Use ordinary app conventions and tests for the stack you choose.
@@ -259,7 +259,7 @@ function defaultRolloutPrompt({ manualProviderSetup = false } = {}) {
     ? `Provider setup may already be present in this directory. Start by verifying it with: ${stripeProjectsCommand} status --json, ${stripeProjectsCommand} services list --json, and ${stripeProjectsCommand} env --json. If Stripe Projects or PostHog env are missing, document the exact command a human must run and stop instead of looping on browser auth.`
     : `Use Stripe Projects for real provider/env setup or discovery. Start with: ${stripeProjectsCommand} status --json`;
 
-  return `The current directory contains an existing SaaS app. Your job is to add and validate a real onboarding/activation experiment.
+  return `The current directory contains an existing SaaS app. Your job is to add and validate a real experiment that fits this product. Do not assume a specific experiment type before inspecting the app.
 
 Hard requirements:
 - ${providerSetup}
@@ -277,14 +277,16 @@ Expected workflow:
 3. Run growth init --json.
 4. Run growth connector import stripe-projects --json.
 5. Run growth connector auth check posthog --json and growth connector validate posthog --json.
-6. Create an onboarding activation experiment with growth experiment create onboarding-flow --template onboarding-activation --json.
-7. Run growth instrumentation plan onboarding-flow --json.
-8. Edit the app to implement assignment, variants, and required events.
-9. Use agent-browser to exercise the app locally. Capture screenshots/traces under ${browserDir}.
-10. Run growth instrumentation verify onboarding-flow --events-file tmp/events.jsonl --json when local events exist.
-11. Run growth preflight prepare onboarding-flow --agents 4 --browser --json.
-12. Use agent-browser to execute each generated preflight packet URL.
-13. Attach agent reports, complete the preflight, pull from PostHog, and run growth preflight audit.
+6. Run growth schema experiment --json and author an experiment spec from the actual product workflow. Use a template only if it genuinely matches the inspected app and user intent.
+7. Create the experiment with growth experiment create <experiment_id> --from-file <spec.json> --json, or with an explicit template only after documenting why it fits.
+8. Run growth instrumentation plan <experiment_id> --json. Treat framework and candidate-file output as advisory; inspect the codebase before editing.
+9. Edit the app to implement assignment, variants, and required events from the experiment contract.
+10. Use agent-browser to exercise the app locally. Capture screenshots/traces under ${browserDir}.
+11. Run growth instrumentation verify <experiment_id> --events-file tmp/events.jsonl --json when local events exist.
+12. Run growth preflight dry-run <experiment_id> --events-file tmp/events.jsonl --json before provider-backed preflight when local events exist.
+13. Run growth preflight prepare <experiment_id> --agents 4 --browser --json.
+14. Use agent-browser to execute each generated preflight packet URL.
+15. Attach agent reports, complete the preflight, pull from PostHog, and run growth preflight audit.
 
 Finish only after the latest preflight audit is ready_for_real_users, or after documenting the exact blocker if that is impossible.`;
 }

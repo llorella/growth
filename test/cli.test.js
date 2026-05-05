@@ -44,6 +44,24 @@ test('status before init does not create .growth', () => {
   }
 });
 
+test('empty project guidance is schema-first rather than template-specific', () => {
+  const root = tempRoot();
+  try {
+    const init = run(root, ['init', '--json']);
+    assert.deepEqual(init.next_steps.includes('growth schema experiment --json'), true);
+    assert.equal(init.next_steps.some((step) => step.includes('conversion-test') || step.includes('onboarding-flow')), false);
+
+    const status = run(root, ['status', '--json']);
+    assert.equal(status._next.command, 'growth schema experiment --json');
+
+    const context = run(root, ['llm-context', '--json']);
+    assert.equal(context._next.command, 'growth schema experiment --json');
+    assert.equal(context.data.commands.some((command) => command.includes('conversion-test')), false);
+  } finally {
+    cleanup(root);
+  }
+});
+
 test('core experiment flow labels simulated traffic as synthetic-only', () => {
   const root = tempRoot();
   try {
@@ -97,6 +115,7 @@ test('instrumentation plan uses custom events and root Next.js layout', () => {
 
     run(root, ['init', '--json']);
     assert.equal(existsSync(path.join(root, '.agents', 'skills', 'growth', 'references', 'nextjs-app-router.md')), true);
+    assert.equal(existsSync(path.join(root, '.agents', 'skills', 'growth', 'references', 'spa-navigation.md')), true);
     const spec = {
       id: 'placeholder',
       name: 'Onboarding workspace test',
@@ -148,6 +167,8 @@ test('instrumentation plan uses custom events and root Next.js layout', () => {
 
     const plan = run(root, ['instrumentation', 'plan', 'onboarding-flow', '--json']);
     assert.equal(plan.data.framework, 'nextjs-app-router');
+    assert.equal(plan.data.framework_hint.advisory_only, true);
+    assert.deepEqual(plan.data.candidate_files.includes('app/utils/events.ts'), true);
     assert.deepEqual(plan.data.suggested_files.includes('app/utils/events.ts'), true);
     assert.deepEqual(plan.data.suggested_files.includes('app/api/events/route.ts'), true);
     assert.deepEqual(plan.data.suggested_files.some((file) => file.startsWith('src/')), false);
@@ -187,6 +208,8 @@ test('instrumentation plan uses custom events and root Next.js layout', () => {
       '--json',
     ]);
     assert.equal(verify.data.actual_event_check.ok, false);
+    assert.equal(verify.data.taxonomy_unlisted_events.includes('workspace_created'), true);
+    assert.equal(verify.warnings.some((warning) => warning.code === 'EVENT_NOT_IN_TAXONOMY'), false);
     assert.equal(
       verify.warnings.some((warning) => warning.code === 'ACTUAL_EVENT_PROPERTY_MISSING'),
       true,
@@ -205,7 +228,7 @@ test('preflight attach-report validates report schema', () => {
     const runId = preflight.data.run.id;
 
     const badReport = path.join(root, 'bad-report.json');
-    writeFileSync(badReport, JSON.stringify({ completed_onboarding: true }) + '\n');
+    writeFileSync(badReport, JSON.stringify({ primary_goal_observed: true }) + '\n');
     const bad = run(
       root,
       ['preflight', 'attach-report', runId, '--agent', '1', '--file', badReport, '--json'],
@@ -218,14 +241,17 @@ test('preflight attach-report validates report schema', () => {
     writeFileSync(
       goodReport,
       JSON.stringify({
-        completed_onboarding: true,
+        primary_goal_observed: true,
         stopped_at_url: 'http://localhost:3000/done',
         stop_reason: 'completed',
-        path_taken: ['opened app', 'finished onboarding'],
-        conversion_observed: true,
-        guardrail_issue_observed: false,
+        path_taken: ['opened app', 'reached primary goal'],
+        primary_metric_events_observed: ['conversion_completed'],
+        guardrail_observed: false,
         confusing_or_broken: [],
+        blockers: [],
         internal_ui_visible: [],
+        missing_expected_events: [],
+        screenshot_or_trace_artifacts: [],
       }) + '\n',
     );
     const good = run(root, [
@@ -243,7 +269,7 @@ test('preflight attach-report validates report schema', () => {
 
     const audit = run(root, ['preflight', 'audit', runId, '--markdown', '--json']);
     assert.match(audit.data.markdown, /Reports attached: 1 \/ 1/);
-    assert.match(audit.data.markdown, /Completed onboarding: 1 \/ 1/);
+    assert.match(audit.data.markdown, /Primary goal observed: 1 \/ 1/);
   } finally {
     cleanup(root);
   }
@@ -268,6 +294,182 @@ test('preflight prepare balances synthetic variant packets by default', () => {
     assert.equal(preflight.warnings.some((warning) => warning.code === 'BALANCED_SYNTHETIC_VARIANTS'), true);
     assert.equal(preflight.warnings.some((warning) => warning.code === 'EVENT_WINDOW_START'), true);
     assert.match(preflight.next_steps.join('\n'), /Events before/);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('preflight packets use explicit experiment scenarios when provided', () => {
+  const root = tempRoot();
+  try {
+    run(root, ['init', '--json']);
+    const spec = genericSpec({
+      id: 'placeholder',
+      event: 'report_exported',
+      denominatorEvent: 'report_viewed',
+      preflight: {
+        scenarios: [
+          {
+            id: 'report_export_path',
+            goal: 'Export a report through the normal product UI.',
+            instructions: ['Open a report if one is available.', 'Use the visible export action.'],
+            expected_events: ['report_viewed', 'report_exported'],
+          },
+        ],
+      },
+    });
+    run(root, ['experiment', 'create', 'reports-test', '--from-json', JSON.stringify(spec), '--json']);
+    const preflight = run(root, ['preflight', 'prepare', 'reports-test', '--agents', '1', '--json']);
+    const packetDir = path.join(root, '.growth', 'runs', preflight.data.run.id, 'agent-packets');
+    const policy = JSON.parse(readFileSync(path.join(packetDir, 'agent-1.policy.json'), 'utf8'));
+    const prompt = readFileSync(path.join(packetDir, 'agent-1.prompt.txt'), 'utf8');
+    assert.equal(policy.scenario.id, 'report_export_path');
+    assert.match(prompt, /Export a report through the normal product UI/);
+    assert.match(prompt, /report_exported/);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('react-vite preflight URLs use framework default and persist explicit app url', () => {
+  const root = tempRoot();
+  try {
+    writeFileSync(
+      path.join(root, 'package.json'),
+      JSON.stringify({ dependencies: { react: '^19.0.0', vite: '^8.0.0' } }) + '\n',
+    );
+    run(root, ['init', '--json']);
+    run(root, ['experiment', 'create', 'my-test', '--template', 'conversion-test', '--json']);
+
+    const detected = run(root, ['preflight', 'prepare', 'my-test', '--agents', '1', '--json']);
+    assert.equal(detected.data.app_url, 'http://localhost:5173');
+    let url = readFileSync(
+      path.join(root, '.growth', 'runs', detected.data.run.id, 'agent-packets', 'agent-1.url.txt'),
+      'utf8',
+    ).trim();
+    assert.equal(new URL(url).origin, 'http://localhost:5173');
+
+    const explicit = run(root, [
+      'preflight',
+      'prepare',
+      'my-test',
+      '--agents',
+      '1',
+      '--base-url',
+      'http://localhost:4444',
+      '--json',
+    ]);
+    assert.equal(explicit.data.run_id, explicit.data.run.id);
+    url = readFileSync(
+      path.join(root, '.growth', 'runs', explicit.data.run.id, 'agent-packets', 'agent-1.url.txt'),
+      'utf8',
+    ).trim();
+    assert.equal(new URL(url).origin, 'http://localhost:4444');
+    const local = JSON.parse(readFileSync(path.join(root, '.growth', 'state.local.json'), 'utf8'));
+    assert.equal(local.local_servers.app_url, 'http://localhost:4444');
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('preflight dry-run audits local JSONL without provider pull', () => {
+  const root = tempRoot();
+  try {
+    run(root, ['init', '--json']);
+    run(root, ['experiment', 'create', 'onboarding-flow', '--template', 'onboarding-activation', '--json']);
+    mkdirSync(path.join(root, 'tmp'), { recursive: true });
+    const events = [];
+    let index = 0;
+    for (const variant of ['control', 'treatment']) {
+      for (const event of onboardingEvents()) {
+        events.push(onboardingEventLine('onboarding-flow', `evt-${variant}-${index++}`, event, variant, true));
+      }
+    }
+    writeFileSync(path.join(root, 'tmp', 'events.jsonl'), events.join('\n') + '\n');
+
+    const dryRun = run(root, [
+      'preflight',
+      'dry-run',
+      'onboarding-flow',
+      '--events-file',
+      'tmp/events.jsonl',
+      '--json',
+    ]);
+    assert.equal(dryRun.data.audit.recommendation, 'ready_for_posthog_preflight');
+    assert.equal(dryRun.data.audit.checks.find((check) => check.id === 'required_events').status, 'pass');
+    assert.equal(dryRun.data.audit.checks.find((check) => check.id === 'synthetic_labels').status, 'pass');
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('preflight complete-local finishes prepared run from synthetic JSONL events', () => {
+  const root = tempRoot();
+  try {
+    run(root, ['init', '--json']);
+    run(root, ['experiment', 'create', 'onboarding-flow', '--template', 'onboarding-activation', '--json']);
+    const preflight = run(root, ['preflight', 'prepare', 'onboarding-flow', '--agents', '2', '--json']);
+    assert.match(preflight._next.command, /growth preflight complete-local/);
+    mkdirSync(path.join(root, 'tmp'), { recursive: true });
+    const events = [];
+    for (const [index, agent] of preflight.data.run.agents.entries()) {
+      for (const event of onboardingEvents()) {
+        events.push(
+          preflightEventLine(
+            'onboarding-flow',
+            `evt-${index}-${event}`,
+            event,
+            agent.variant_id,
+            agent.agent_id,
+          ),
+        );
+      }
+    }
+    writeFileSync(path.join(root, 'tmp', 'preflight-events.jsonl'), events.join('\n') + '\n');
+
+    const completed = run(root, [
+      'preflight',
+      'complete-local',
+      preflight.data.run.id,
+      '--events-file',
+      'tmp/preflight-events.jsonl',
+      '--json',
+    ]);
+    assert.equal(completed.data.run.status, 'completed');
+    assert.equal(completed.data.audit.recommendation, 'ready_for_posthog_preflight');
+    assert.match(completed._next.command, /growth connector import stripe-projects --json/);
+    assert.equal(completed.data.audit.checks.find((check) => check.id === 'reports_attached').status, 'pass');
+    assert.equal(completed.data.audit.checks.find((check) => check.id === 'required_events').status, 'pass');
+    assert.equal(existsSync(path.join(root, completed.data.audit_file)), true);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('preflight dry-run fails and prints synthetic label evidence for unlabeled local events', () => {
+  const root = tempRoot();
+  try {
+    run(root, ['init', '--json']);
+    run(root, ['experiment', 'create', 'onboarding-flow', '--template', 'onboarding-activation', '--json']);
+    mkdirSync(path.join(root, 'tmp'), { recursive: true });
+    const events = onboardingEvents().map((event, index) =>
+      onboardingEventLine('onboarding-flow', `evt-${index}`, event, 'control', index !== 0),
+    );
+    events.push(...onboardingEvents().map((event, index) =>
+      onboardingEventLine('onboarding-flow', `evt-treatment-${index}`, event, 'treatment', true),
+    ));
+    writeFileSync(path.join(root, 'tmp', 'events.jsonl'), events.join('\n') + '\n');
+
+    const dryRun = run(root, [
+      'preflight',
+      'dry-run',
+      'onboarding-flow',
+      '--events-file',
+      'tmp/events.jsonl',
+      '--json',
+    ]);
+    assert.equal(dryRun.data.audit.recommendation, 'do_not_launch');
+    assert.match(dryRun.data.markdown, /Synthetic Label Evidence/);
   } finally {
     cleanup(root);
   }
@@ -437,23 +639,22 @@ test('preflight command is primary and returns structured audit and continuation
     const preflight = run(root, ['preflight', 'prepare', 'onboarding-flow', '--agents', '2', '--json']);
     assert.match(preflight.data.run.id, /^preflight_/);
     assert.equal(preflight.data.run.type, 'preflight');
-    assert.match(preflight._next.command, /growth preflight attach-report/);
+    assert.match(preflight._next.command, /growth preflight complete-local/);
 
     for (let i = 1; i <= 2; i++) {
       const report = path.join(root, `report-${i}.json`);
       writeFileSync(
         report,
         JSON.stringify({
-          completed_onboarding: true,
+          primary_goal_observed: true,
           stopped_at_url: 'http://localhost:3000/done',
           stop_reason: 'completed',
-          path_taken: ['opened app', 'finished onboarding'],
+          path_taken: ['opened app', 'reached primary goal'],
           variant_observed: i === 1 ? 'control' : 'treatment',
-          conversion_observed: true,
-          activation_observed: true,
-          guardrail_issue_observed: false,
+          primary_metric_events_observed: ['activation_completed'],
+          guardrail_observed: false,
           confusing_or_broken: [],
-          auth_or_payment_blockers: [],
+          blockers: [],
           internal_ui_visible: [],
           missing_expected_events: [],
           screenshot_or_trace_artifacts: [],
@@ -464,8 +665,121 @@ test('preflight command is primary and returns structured audit and continuation
 
     const audit = run(root, ['preflight', 'audit', preflight.data.run.id, '--json']);
     assert.equal(audit.data.audit.synthetic_only, true);
-    assert.equal(audit.data.audit.recommendation, 'fix_instrumentation');
+    assert.equal(audit.data.audit.recommendation, 'fix_app_instrumentation');
     assert.ok(audit.data.audit.checks.some((check) => check.id === 'required_events' && check.status === 'fail'));
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('preflight audit attributes missing preflight events to coverage after local verification passes', () => {
+  const root = tempRoot();
+  try {
+    run(root, ['init', '--json']);
+    run(root, ['experiment', 'create', 'onboarding-flow', '--template', 'onboarding-activation', '--json']);
+    mkdirSync(path.join(root, 'tmp'), { recursive: true });
+    const localEvents = [];
+    for (const variant of ['control', 'treatment']) {
+      for (const [index, event] of onboardingEvents().entries()) {
+        localEvents.push(onboardingEventLine('onboarding-flow', `local-${variant}-${index}`, event, variant, true));
+      }
+    }
+    writeFileSync(path.join(root, 'tmp', 'events.jsonl'), localEvents.join('\n') + '\n');
+    const verify = run(root, [
+      'instrumentation',
+      'verify',
+      'onboarding-flow',
+      '--events-file',
+      'tmp/events.jsonl',
+      '--json',
+    ]);
+    assert.equal(verify.data.actual_event_check.ok, true);
+
+    const preflight = run(root, ['preflight', 'prepare', 'onboarding-flow', '--agents', '2', '--json']);
+    for (let i = 1; i <= 2; i++) {
+      const report = path.join(root, `report-${i}.json`);
+      writeFileSync(report, JSON.stringify(goodReport(i === 1 ? 'control' : 'treatment')) + '\n');
+      const attached = run(root, [
+        'preflight',
+        'attach-report',
+        preflight.data.run.id,
+        '--agent',
+        String(i),
+        '--file',
+        report,
+        '--json',
+      ]);
+      assert.equal(attached.data.status, 'attached');
+      assert.equal(attached.data.schema_validation, 'ok');
+      assert.equal(attached.data.agent_id, preflight.data.run.agents[i - 1].agent_id);
+    }
+
+    const audit = run(root, ['preflight', 'audit', preflight.data.run.id, '--json']);
+    assert.equal(audit.data.audit.recommendation, 'extend_preflight_coverage');
+    const required = audit.data.audit.checks.find((check) => check.id === 'required_events');
+    assert.equal(required.evidence.attribution, 'synthetic_coverage_gap');
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('doctor warns when SPA navigation can drop synthetic query params', () => {
+  const root = tempRoot();
+  try {
+    mkdirSync(path.join(root, 'src'), { recursive: true });
+    writeFileSync(
+      path.join(root, 'src', 'App.tsx'),
+      [
+        "import { Link } from 'react-router-dom';",
+        "const agent = new URLSearchParams(window.location.search).get('agent_generated');",
+        "export function App(){ return <Link to='/settings'>{agent}</Link>; }",
+      ].join('\n'),
+    );
+    run(root, ['init', '--json']);
+    const doctor = run(root, ['doctor', '--json']);
+    const check = doctor.data.checks.find((item) => item.name === 'spa_agent_context');
+    assert.equal(check.status, 'warn');
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('env set can source values from process env without echoing the secret', () => {
+  const root = tempRoot();
+  try {
+    run(root, ['init', '--json']);
+    const set = run(
+      root,
+      ['env', 'set', '--key', 'POSTHOG_PERSONAL_API_KEY', '--from-env', 'SOURCE_POSTHOG_KEY', '--json'],
+      { env: { SOURCE_POSTHOG_KEY: 'phx_secret_value' } },
+    );
+    assert.equal(set.data.source.from_env, 'SOURCE_POSTHOG_KEY');
+    assert.equal(set.data.value, '[redacted]');
+    assert.doesNotMatch(JSON.stringify(set), /phx_secret_value/);
+    assert.match(readFileSync(path.join(root, '.env.local'), 'utf8'), /POSTHOG_PERSONAL_API_KEY="phx_secret_value"/);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('posthog connector uses variant_id canonically while accepting legacy variant fallback', () => {
+  const root = tempRoot();
+  try {
+    run(root, ['init', '--json']);
+    run(root, ['experiment', 'create', 'my-test', '--template', 'conversion-test', '--json']);
+    const connector = run(root, ['connector', 'add', 'posthog', '--json']);
+    assert.equal(connector.data.connector.variant_id_path, 'properties.variant_id');
+
+    mkdirSync(path.join(root, 'tmp'), { recursive: true });
+    writeFileSync(
+      path.join(root, 'tmp', 'events.jsonl'),
+      [
+        legacyVariantEventLine('my-test', 'legacy-view', 'experiment_viewed', 'control'),
+        legacyVariantEventLine('my-test', 'legacy-convert', 'conversion_completed', 'treatment'),
+      ].join('\n') + '\n',
+    );
+    const dryRun = run(root, ['preflight', 'dry-run', 'my-test', '--events-file', 'tmp/events.jsonl', '--json']);
+    assert.equal(dryRun.data.audit.checks.find((check) => check.id === 'variant_reachability').status, 'pass');
   } finally {
     cleanup(root);
   }
@@ -648,4 +962,117 @@ function eventLine(experimentId, eventId, event, timestamp) {
       agent_run_id: `run-${experimentId}`,
     },
   });
+}
+
+function onboardingEvents() {
+  return [
+    'experiment_viewed',
+    'onboarding_started',
+    'onboarding_step_viewed',
+    'onboarding_step_completed',
+    'onboarding_completed',
+    'activation_completed',
+    'onboarding_error',
+    'auth_blocked',
+    'internal_ui_visible',
+    'support_or_help_clicked',
+  ];
+}
+
+function onboardingEventLine(experimentId, eventId, event, variant, labeled) {
+  return JSON.stringify({
+    event,
+    properties: {
+      event_id: eventId,
+      experiment_id: experimentId,
+      variant_id: variant,
+      user_id: `user-${variant}`,
+      session_id: `session-${variant}`,
+      timestamp: '2026-01-01T00:00:00.000Z',
+      agent_generated: labeled ? true : undefined,
+      agent_run_id: labeled ? `agent-${variant}` : undefined,
+    },
+  });
+}
+
+function preflightEventLine(experimentId, eventId, event, variant, agentRunId) {
+  return JSON.stringify({
+    event,
+    properties: {
+      event_id: eventId,
+      experiment_id: experimentId,
+      variant_id: variant,
+      user_id: `user-${agentRunId}`,
+      session_id: `session-${agentRunId}`,
+      timestamp: '2026-01-01T00:00:00.000Z',
+      agent_generated: true,
+      agent_run_id: agentRunId,
+    },
+  });
+}
+
+function legacyVariantEventLine(experimentId, eventId, event, variant) {
+  return JSON.stringify({
+    event,
+    properties: {
+      event_id: eventId,
+      experiment_id: experimentId,
+      variant,
+      user_id: `user-${variant}`,
+      session_id: `session-${variant}`,
+      timestamp: '2026-01-01T00:00:00.000Z',
+      agent_generated: true,
+      agent_run_id: `agent-${variant}`,
+    },
+  });
+}
+
+function genericSpec({ id, event, denominatorEvent, preflight }) {
+  return {
+    id,
+    name: 'Generic experiment',
+    hypothesis:
+      'We believe changing this product surface will improve the primary metric because users will have a clearer path.',
+    status: 'draft',
+    variants: [
+      { id: 'control', name: 'Control', weight: 50 },
+      { id: 'treatment', name: 'Treatment', weight: 50 },
+    ],
+    metrics: [
+      {
+        id: 'primary_rate',
+        name: 'Primary rate',
+        role: 'primary',
+        type: 'proportion',
+        direction: 'higher_is_better',
+        event,
+        denominator_event: denominatorEvent,
+      },
+    ],
+    sample_size: {
+      baseline_rate: 0.2,
+      minimum_detectable_effect: 0.15,
+      power: 0.8,
+      alpha: 0.05,
+    },
+    schedule: { max_duration_days: 30, min_runtime_days: 7 },
+    preflight,
+  };
+}
+
+function goodReport(variant) {
+  return {
+    primary_goal_observed: true,
+    stopped_at_url: 'http://localhost:3000/done',
+    stop_reason: 'completed',
+    path_taken: ['opened app', 'reached primary goal'],
+    variant_observed: variant,
+    primary_metric_events_observed: ['activation_completed'],
+    guardrail_observed: false,
+    confusing_or_broken: [],
+    blockers: [],
+    internal_ui_visible: [],
+    missing_expected_events: [],
+    screenshot_or_trace_artifacts: [],
+  };
 }

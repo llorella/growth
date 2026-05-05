@@ -18,6 +18,7 @@ export interface BuildExperimentInput {
   domains?: string[];
   notes?: string;
   instrumentation?: Experiment['instrumentation'];
+  preflight?: Experiment['preflight'];
 }
 
 export function buildExperiment(input: BuildExperimentInput): Experiment {
@@ -66,6 +67,7 @@ export function buildExperiment(input: BuildExperimentInput): Experiment {
       min_runtime_days: input.min_runtime_days ?? 7,
     },
     instrumentation: input.instrumentation,
+    preflight: input.preflight,
     notes: input.notes,
     created_at: now,
     updated_at: now,
@@ -95,5 +97,6 @@ export function applyTemplate(
     domains: overrides.domains ?? template.targeting?.domains,
     notes: overrides.notes ?? template.notes,
     instrumentation: overrides.instrumentation ?? template.instrumentation,
+    preflight: overrides.preflight ?? template.preflight,
   });
 }

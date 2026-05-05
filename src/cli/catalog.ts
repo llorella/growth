@@ -8,26 +8,18 @@ const CATALOGS: Record<string, unknown> = {
   templates: CATALOG.templates,
   metrics: CATALOG.metric_archetypes,
   workflows: CATALOG.workflows,
-  events: [
+  example_events: [
     'experiment_viewed',
-    'conversion_completed',
-    'onboarding_started',
-    'onboarding_completed',
-    'activation_completed',
-    'onboarding_error',
-    'pricing_viewed',
-    'checkout_completed',
-    'refund_requested',
-    'cross_sell_presented',
-    'cross_sell_accepted',
+    'primary_goal_completed',
+    'guardrail_condition_observed',
   ],
 };
 
 export function registerCatalog(program: Command, ctx: RunCtx): void {
   program
     .command('catalog')
-    .description('List known connector, template, event, metric, and workflow identifiers.')
-    .argument('[name]', 'connectors, templates, events, metrics, or workflows')
+    .description('List example connector, template, event, metric, and workflow identifiers.')
+    .argument('[name]', 'connectors, templates, example_events, metrics, or workflows')
     .action(async (name?: string) => {
       await wrap('growth catalog', ctx, async () => {
         if (!name) {

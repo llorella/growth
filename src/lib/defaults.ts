@@ -268,17 +268,17 @@ export const DEFAULT_EVENT_TAXONOMY = {
     {
       event: 'experiment_viewed',
       description: 'A user viewed a surface controlled by an experiment.',
-      required_properties: ['experiment_id', 'variant', 'user_id', 'session_id', 'timestamp', 'agent_generated', 'agent_run_id'],
+      required_properties: ['experiment_id', 'variant_id', 'user_id', 'session_id', 'timestamp', 'agent_generated', 'agent_run_id'],
     },
     {
       event: 'conversion_completed',
       description: 'A user completed the primary conversion.',
-      required_properties: ['experiment_id', 'variant', 'user_id', 'session_id', 'timestamp', 'agent_generated', 'agent_run_id'],
+      required_properties: ['experiment_id', 'variant_id', 'user_id', 'session_id', 'timestamp', 'agent_generated', 'agent_run_id'],
     },
     {
       event: 'onboarding_started',
       description: 'A user started onboarding.',
-      required_properties: ['experiment_id', 'variant', 'user_id', 'session_id', 'timestamp', 'agent_generated', 'agent_run_id'],
+      required_properties: ['experiment_id', 'variant_id', 'user_id', 'session_id', 'timestamp', 'agent_generated', 'agent_run_id'],
     },
     {
       event: 'onboarding_step_viewed',
@@ -293,17 +293,17 @@ export const DEFAULT_EVENT_TAXONOMY = {
     {
       event: 'onboarding_completed',
       description: 'A user completed onboarding.',
-      required_properties: ['experiment_id', 'variant', 'user_id', 'session_id', 'timestamp', 'agent_generated', 'agent_run_id'],
+      required_properties: ['experiment_id', 'variant_id', 'user_id', 'session_id', 'timestamp', 'agent_generated', 'agent_run_id'],
     },
     {
       event: 'activation_completed',
       description: 'A user reached the activation milestone.',
-      required_properties: ['experiment_id', 'variant', 'user_id', 'session_id', 'timestamp', 'agent_generated', 'agent_run_id'],
+      required_properties: ['experiment_id', 'variant_id', 'user_id', 'session_id', 'timestamp', 'agent_generated', 'agent_run_id'],
     },
     {
       event: 'onboarding_error',
       description: 'A user encountered an onboarding error or blocking failure.',
-      required_properties: ['experiment_id', 'variant', 'user_id', 'session_id', 'timestamp', 'agent_generated', 'agent_run_id'],
+      required_properties: ['experiment_id', 'variant_id', 'user_id', 'session_id', 'timestamp', 'agent_generated', 'agent_run_id'],
     },
     {
       event: 'auth_blocked',
@@ -323,27 +323,27 @@ export const DEFAULT_EVENT_TAXONOMY = {
     {
       event: 'pricing_viewed',
       description: 'A user viewed a pricing page or package comparison.',
-      required_properties: ['experiment_id', 'variant', 'user_id', 'session_id', 'timestamp', 'agent_generated', 'agent_run_id'],
+      required_properties: ['experiment_id', 'variant_id', 'user_id', 'session_id', 'timestamp', 'agent_generated', 'agent_run_id'],
     },
     {
       event: 'checkout_completed',
       description: 'A user completed checkout.',
-      required_properties: ['experiment_id', 'variant', 'user_id', 'session_id', 'timestamp', 'agent_generated', 'agent_run_id'],
+      required_properties: ['experiment_id', 'variant_id', 'user_id', 'session_id', 'timestamp', 'agent_generated', 'agent_run_id'],
     },
     {
       event: 'refund_requested',
       description: 'A user requested a refund.',
-      required_properties: ['experiment_id', 'variant', 'user_id', 'session_id', 'timestamp', 'agent_generated', 'agent_run_id'],
+      required_properties: ['experiment_id', 'variant_id', 'user_id', 'session_id', 'timestamp', 'agent_generated', 'agent_run_id'],
     },
     {
       event: 'cross_sell_presented',
       description: 'A user saw a cross-sell recommendation.',
-      required_properties: ['experiment_id', 'variant', 'user_id', 'session_id', 'timestamp', 'agent_generated', 'agent_run_id'],
+      required_properties: ['experiment_id', 'variant_id', 'user_id', 'session_id', 'timestamp', 'agent_generated', 'agent_run_id'],
     },
     {
       event: 'cross_sell_accepted',
       description: 'A user accepted a cross-sell recommendation.',
-      required_properties: ['experiment_id', 'variant', 'user_id', 'session_id', 'timestamp', 'agent_generated', 'agent_run_id'],
+      required_properties: ['experiment_id', 'variant_id', 'user_id', 'session_id', 'timestamp', 'agent_generated', 'agent_run_id'],
     },
   ],
 };
