@@ -24,6 +24,7 @@ growth llm-context --json
 
 Rules:
 
+- If \`growth status --json\` reports \`initialized=false\`, run \`growth init --json\` before creating experiments.
 - Do not read \`.growth/state.local.json\`.
 - Do not read \`.env*\`.
 - Do not hand-edit \`.growth/state.json\`, \`.growth/audit.jsonl\`, or \`.growth/data/*\`.
@@ -33,6 +34,8 @@ Rules:
 - Prefer the growth MCP server when available; otherwise use \`growth ... --json\`.
 - Use \`growth preflight prepare\`, not ad hoc browser-agent prompts.
 - Use \`growth pull\` and \`growth analyze\`; do not rely on raw analytics screenshots.
+- Treat \`ready_for_provider_preflight\` as local synthetic readiness only.
+- Treat \`provider_preflight_passed\` as provider-backed synthetic readiness only.
 - Never treat agent-generated traffic as real-user evidence.
 `;
 
@@ -82,6 +85,7 @@ Append one JSON object per line to the connector's \`local.events_file\`, common
 After implementing, run:
 
 \`\`\`bash
+growth connector add local --events-file tmp/events.jsonl --json
 growth instrumentation verify <experiment_id> --events-file tmp/events.jsonl --json
 growth connector validate local --json
 \`\`\`
@@ -139,7 +143,7 @@ const WORKFLOWS: Record<string, string> = {
 4. Inspect existing app structure yourself; framework hints and candidate files are advisory.
 5. If client-side navigation is present, persist preflight query params to sessionStorage before navigation.
 6. Run \`growth instrumentation verify <id> --json\`.
-7. If local app events exist, run \`growth instrumentation verify <id> --events-file tmp/events.jsonl --json\`.
+7. If local app events exist, run \`growth connector add local --events-file tmp/events.jsonl --json\`, then \`growth instrumentation verify <id> --events-file tmp/events.jsonl --json\`.
 8. Use \`growth preflight dry-run <id> --events-file tmp/events.jsonl --json\` for a fast local audit before provider preflight.
 `,
   'run-preflight.md': `# Run Preflight
