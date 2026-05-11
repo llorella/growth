@@ -16,7 +16,8 @@ import path from 'node:path';
 import type { Experiment, ExperimentEvent } from '../domain/types.js';
 import { paths } from './paths.js';
 import { GrowthError } from './envelope.js';
-import { DEFAULT_EVENT_TAXONOMY } from './defaults.js';
+import { isConnectorKind, requiredConnectorEvents } from './connector-catalog.js';
+export { defaultLocalConnector, defaultPostHogConnector } from './connector-catalog.js';
 
 export interface ConnectorMapping {
   framework_event?: string;
@@ -53,8 +54,6 @@ export interface ConnectorValidationIssue {
   message: string;
   path?: string;
 }
-
-const CONNECTOR_KINDS = new Set(['posthog', 'segment', 'stripe', 'native-app', 'warehouse', 'custom']);
 
 export async function listConnectors(root: string): Promise<ConnectorConfig[]> {
   const dir = paths(root).connectorsDir;
@@ -97,7 +96,7 @@ export function validateConnectorConfig(connector: ConnectorConfig): ConnectorVa
       issues.push({ source, message: `missing ${field}`, path: field });
     }
   }
-  if (!CONNECTOR_KINDS.has(connector.kind)) {
+  if (!isConnectorKind(connector.kind)) {
     issues.push({ source, message: `unsupported kind ${String(connector.kind)}`, path: 'kind' });
   }
   if (connector.kind === 'posthog') {
@@ -164,7 +163,7 @@ export function assertCoverage(
   const required = new Set<string>();
   for (const exp of experiments) {
     if (exp.status === 'stopped' || exp.status === 'completed') continue;
-    for (const event of requiredExperimentEvents(exp)) required.add(event);
+    for (const event of requiredConnectorEvents(exp)) required.add(event);
   }
   const provided = new Set<string>();
   for (const c of connectors) {
@@ -288,26 +287,6 @@ export function mapEvent(connector: ConnectorConfig, raw: unknown): MapResult {
   };
 }
 
-export function defaultPostHogConnector(projectId: string | number = 'POSTHOG_PROJECT_ID'): ConnectorConfig {
-  return {
-    source: 'posthog',
-    kind: 'posthog',
-    user_id_path: 'distinct_id',
-    anonymous_id_path: 'properties.$anon_distinct_id',
-    experiment_id_path: 'properties.experiment_id',
-    variant_id_path: 'properties.variant_id',
-    event_name_path: 'event',
-    timestamp_path: 'timestamp',
-    idempotency_key_path: 'uuid',
-    posthog: {
-      host: 'https://us.posthog.com',
-      project_id: projectId,
-      api_key_env: 'POSTHOG_PERSONAL_API_KEY',
-    },
-    mappings: {},
-  };
-}
-
 function readVariantId(connector: ConnectorConfig, raw: unknown): string | undefined {
   const configured = connector.variant_id_path
     ? (readPath(raw, connector.variant_id_path) as string | undefined)
@@ -317,48 +296,6 @@ function readVariantId(connector: ConnectorConfig, raw: unknown): string | undef
     return readPath(raw, 'properties.variant') as string | undefined;
   }
   return undefined;
-}
-
-export function defaultLocalConnector(eventsFile = 'tmp/events.jsonl'): ConnectorConfig {
-  return {
-    source: 'local',
-    kind: 'native-app',
-    user_id_path: 'properties.user_id',
-    anonymous_id_path: 'properties.anonymous_id',
-    experiment_id_path: 'properties.experiment_id',
-    variant_id_path: 'properties.variant_id',
-    event_name_path: 'event',
-    timestamp_path: 'properties.timestamp',
-    idempotency_key_path: 'properties.event_id',
-    local: {
-      events_file: eventsFile,
-    },
-    mappings: Object.fromEntries(
-      DEFAULT_EVENT_TAXONOMY.events.map((event) => [
-        event.event,
-        {
-          framework_event: event.event,
-          payload_paths: {
-            agent_generated: 'properties.agent_generated',
-            agent_run_id: 'properties.agent_run_id',
-            session_id: 'properties.session_id',
-          },
-        },
-      ]),
-    ),
-  };
-}
-
-function requiredExperimentEvents(exp: Experiment): string[] {
-  const out = new Set<string>();
-  for (const metric of exp.metrics) {
-    out.add(metric.event);
-    if (metric.denominator_event) out.add(metric.denominator_event);
-  }
-  for (const event of exp.instrumentation?.events ?? []) {
-    out.add(event.event);
-  }
-  return Array.from(out);
 }
 
 function stableEventKey(

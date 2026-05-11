@@ -1,13 +1,14 @@
 import type { GrowthRun } from '../domain/types.js';
+import { PREFLIGHT_AUDIT_CHECKS } from './audit-policy.js';
 import type { PreflightAudit } from './types.js';
 
 export function auditMarkdown(run: GrowthRun, audit: PreflightAudit): string {
   const reports = audit.reports;
-  const reportsAttached = audit.checks.find((check) => check.id === 'reports_attached')?.message ?? '';
-  const variantReachability = audit.checks.find((check) => check.id === 'variant_reachability')?.message ?? '';
-  const requiredEventsCheck = audit.checks.find((check) => check.id === 'required_events');
+  const reportsAttached = audit.checks.find((check) => check.id === PREFLIGHT_AUDIT_CHECKS.reportsAttached)?.message ?? '';
+  const variantReachability = audit.checks.find((check) => check.id === PREFLIGHT_AUDIT_CHECKS.variantReachability)?.message ?? '';
+  const requiredEventsCheck = audit.checks.find((check) => check.id === PREFLIGHT_AUDIT_CHECKS.requiredEvents);
   const requiredEvents = requiredEventsCheck?.message ?? '';
-  const syntheticLabelsCheck = audit.checks.find((check) => check.id === 'synthetic_labels');
+  const syntheticLabelsCheck = audit.checks.find((check) => check.id === PREFLIGHT_AUDIT_CHECKS.syntheticLabels);
   const unlabeled = readUnlabeledEvidence(syntheticLabelsCheck?.evidence);
   const requiredAttribution = readRequiredAttribution(requiredEventsCheck?.evidence);
   const stopReasons = countBy(reports.map((report) => report.stop_reason || '(missing)'));
@@ -109,4 +110,3 @@ function formatCounts(counts: Record<string, number>): string[] {
   if (!entries.length) return ['- none'];
   return entries.map(([key, count]) => `- ${key}: ${count}`);
 }
-

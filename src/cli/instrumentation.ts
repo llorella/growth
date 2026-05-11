@@ -10,6 +10,11 @@ import { resolveAppUrl } from '../lib/app-url.js';
 import { listConnectors, assertCoverage, type ConnectorConfig } from '../lib/connectors.js';
 import { paths } from '../lib/paths.js';
 import type { Experiment } from '../domain/types.js';
+import {
+  SYNTHETIC_TRAFFIC_FIELDS,
+  SYNTHETIC_TRAFFIC_QUERY_PARAMS,
+  SYNTHETIC_TRAFFIC_REQUIRED_PROPERTIES,
+} from '../domain/synthetic-traffic.js';
 import { scanSpaAgentContext, type SpaAgentContextScan } from '../lib/code-hints.js';
 
 const REQUIRED_EVENT_PROPERTIES = [
@@ -18,8 +23,7 @@ const REQUIRED_EVENT_PROPERTIES = [
   'user_id',
   'session_id',
   'timestamp',
-  'agent_generated',
-  'agent_run_id',
+  ...SYNTHETIC_TRAFFIC_REQUIRED_PROPERTIES,
 ];
 
 interface RequiredEventSpec {
@@ -57,7 +61,7 @@ export function registerInstrumentation(program: Command, ctx: RunCtx): void {
             candidate_files: suggestedFiles,
             suggested_files: suggestedFiles,
             connector_event_shapes: connectors.map(connectorEventShape),
-            preflight_query_params: PREFLIGHT_QUERY_PARAMS,
+            preflight_query_params: SYNTHETIC_TRAFFIC_QUERY_PARAMS,
             known_pitfalls: knownPitfalls(spaAgentContext),
             reference_implementation: referenceImplementation(framework),
             prompt_packet: {
@@ -254,34 +258,11 @@ function buildContract(exp: Experiment) {
     },
     events: requiredEventSpecs(exp),
     agent_traffic: {
-      required_properties: ['agent_generated', 'agent_run_id'],
-      query_params: PREFLIGHT_QUERY_PARAMS,
+      required_properties: SYNTHETIC_TRAFFIC_REQUIRED_PROPERTIES,
+      query_params: SYNTHETIC_TRAFFIC_QUERY_PARAMS,
     },
   };
 }
-
-const PREFLIGHT_QUERY_PARAMS = [
-  {
-    name: 'agent_generated',
-    value: 'true',
-    meaning: 'Marks browser-agent traffic so analysis can keep it separate from real users.',
-  },
-  {
-    name: 'agent_run_id',
-    value: '<preflight_run_id>_agent_<n>',
-    meaning: 'Stable synthetic run id. Preserve it on every emitted event.',
-  },
-  {
-    name: 'experiment_id',
-    value: '<experiment_id>',
-    meaning: 'Experiment being exercised by the preflight packet.',
-  },
-  {
-    name: 'variant',
-    value: '<variant_id>',
-    meaning: 'Synthetic preflight packets may force a variant to balance test coverage.',
-  },
-] as const;
 
 function connectorEventShape(connector: ConnectorConfig) {
   const sample: Record<string, unknown> = {};
@@ -432,8 +413,8 @@ function sampleProperties(exp: Experiment, spec: RequiredEventSpec): Record<stri
     anonymous_id: 'anon_sample_123',
     session_id: 'session_sample_123',
     timestamp: new Date().toISOString(),
-    agent_generated: false,
-    agent_run_id: null,
+    [SYNTHETIC_TRAFFIC_FIELDS.agentGenerated]: false,
+    [SYNTHETIC_TRAFFIC_FIELDS.agentRunId]: null,
     assignment_id: `assign_${exp.id}_sample`,
     value: 1,
   };

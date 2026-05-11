@@ -3,8 +3,10 @@ import path from 'node:path';
 import { paths } from '../lib/paths.js';
 import { GrowthError } from '../lib/envelope.js';
 import { defaultLocalConnector, mapEvent } from '../lib/connectors.js';
+import { syntheticTrafficConnectorPayloadPaths } from '../lib/connector-catalog.js';
 import type { Experiment, ExperimentEvent, GrowthRun } from '../domain/types.js';
-import { expectedEvents, metricEvents, unique } from './packets.js';
+import { syntheticAgentRunId } from '../domain/synthetic-traffic.js';
+import { preflightCoverage, requiredPreflightEvents, uniqueEvents } from './coverage.js';
 import type { PreflightReportSummary } from './types.js';
 
 export function summarizeReport(report: PreflightReportSummary): Record<string, unknown> {
@@ -21,11 +23,12 @@ export function summarizeReport(report: PreflightReportSummary): Record<string, 
 }
 
 export function synthesizeReportsFromEvents(run: GrowthRun, exp: Experiment, events: ExperimentEvent[]): PreflightReportSummary[] {
-  const required = expectedEvents(exp);
-  const primaryEvents = unique(exp.metrics.filter((metric) => metric.role === 'primary').flatMap(metricEvents));
+  const coverage = preflightCoverage(exp);
+  const required = coverage.required_events;
+  const primaryEvents = coverage.primary_metric_events;
   return (run.agents ?? []).map((agent) => {
-    const agentEvents = events.filter((event) => event.payload?.agent_run_id === agent.agent_id);
-    const observed = unique(agentEvents.map((event) => event.event));
+    const agentEvents = events.filter((event) => syntheticAgentRunId(event) === agent.agent_id);
+    const observed = uniqueEvents(agentEvents.map((event) => event.event));
     const observedSet = new Set(observed);
     const missing = required.filter((event) => !observedSet.has(event));
     const primaryObserved = primaryEvents.length > 0 && primaryEvents.every((event) => observedSet.has(event));
@@ -49,14 +52,10 @@ export async function readLocalEventsAsExperimentEvents(root: string, eventsFile
   const resolved = path.resolve(root, eventsFile);
   const raw = await fs.readFile(resolved, 'utf8');
   const connector = defaultLocalConnector(path.relative(root, resolved));
-  for (const event of expectedEvents(exp)) {
+  for (const event of requiredPreflightEvents(exp)) {
     connector.mappings[event] = connector.mappings[event] ?? {
       framework_event: event,
-      payload_paths: {
-        agent_generated: 'properties.agent_generated',
-        agent_run_id: 'properties.agent_run_id',
-        session_id: 'properties.session_id',
-      },
+      payload_paths: syntheticTrafficConnectorPayloadPaths(),
     };
   }
   const events: ExperimentEvent[] = [];
@@ -168,4 +167,3 @@ function normalizeReport(root: string, file: string, parsed: PreflightReportSumm
       : [],
   };
 }
-

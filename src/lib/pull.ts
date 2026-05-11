@@ -20,8 +20,10 @@ import {
   readPath,
   type ConnectorConfig,
 } from './connectors.js';
+import { POSTHOG_DEFAULT_API_KEY_ENV, POSTHOG_DEFAULT_HOST, connectorApiKeyEnv } from './connector-catalog.js';
 import { readEnvValue } from './env-files.js';
 import type { Assignment, ExperimentEvent } from '../domain/types.js';
+import { containsTimestamp } from '../domain/event-window.js';
 
 export interface PullCursors {
   [source: string]: {
@@ -266,8 +268,7 @@ async function fetchLocalJsonl(
     );
   }
 
-  const afterMs = new Date(after).getTime();
-  const beforeMs = new Date(before).getTime();
+  const window = { after, before };
   const out: unknown[] = [];
   for (const line of raw.split('\n')) {
     if (!line.trim()) continue;
@@ -280,10 +281,11 @@ async function fetchLocalJsonl(
     const timestamp = connector.timestamp_path
       ? readPath(parsed, connector.timestamp_path)
       : readPath(parsed, 'timestamp');
-    if (typeof timestamp === 'string') {
-      const ts = new Date(timestamp).getTime();
-      if (Number.isFinite(ts) && (ts < afterMs || ts >= beforeMs)) continue;
-    }
+    const timestampCheck = containsTimestamp(
+      window,
+      typeof timestamp === 'string' ? timestamp : undefined,
+    );
+    if (!timestampCheck.inside) continue;
     out.push(parsed);
     if (out.length >= limit) break;
   }
@@ -417,7 +419,7 @@ async function fetchPostHog(
       'posthog connector is missing the `posthog` config block (host, project_id, api_key_env).',
     );
   }
-  const apiKeyEnv = connector.posthog.api_key_env ?? 'POSTHOG_PERSONAL_API_KEY';
+  const apiKeyEnv = connectorApiKeyEnv(connector) ?? POSTHOG_DEFAULT_API_KEY_ENV;
   const apiKey = await readEnvValue(root, apiKeyEnv);
   if (!apiKey) {
     throw new GrowthError(
@@ -425,7 +427,7 @@ async function fetchPostHog(
       `Set ${apiKeyEnv} to a PostHog personal API key with query:read scope.`,
     );
   }
-  const host = connector.posthog.host ?? 'https://us.posthog.com';
+  const host = connector.posthog.host ?? POSTHOG_DEFAULT_HOST;
   const configuredProjectId = connector.posthog.project_id;
   const projectId =
     typeof configuredProjectId === 'string' && (await readEnvValue(root, configuredProjectId))

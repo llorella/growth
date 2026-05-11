@@ -8,18 +8,27 @@ import { requireInitialized } from '../lib/gating.js';
 import { Store } from '../lib/store.js';
 import {
   assertCoverage,
-  defaultLocalConnector,
-  defaultPostHogConnector,
   getConnector,
   listConnectors,
   validateConnectorConfig,
   type ConnectorConfig,
 } from '../lib/connectors.js';
+import {
+  POSTHOG_DEFAULT_API_KEY_ENV,
+  POSTHOG_DEFAULT_HOST,
+  POSTHOG_DEFAULT_PROJECT_ID,
+  connectorApiKeyEnv,
+  connectorRequiredEnv,
+  connectorRequiredScopes,
+  defaultLocalConnector,
+  defaultPostHogConnector,
+  defaultPostHogMappings,
+  isEnvReference,
+} from '../lib/connector-catalog.js';
 import { paths } from '../lib/paths.js';
 import { readShared, writeShared } from '../lib/state.js';
 import { GrowthError } from '../lib/envelope.js';
 import { parseEnvText, readEnvValue, readLocalEnv } from '../lib/env-files.js';
-import { DEFAULT_EVENT_TAXONOMY } from '../lib/defaults.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -60,9 +69,9 @@ export function registerConnectors(program: Command, ctx: RunCtx): void {
   connector
     .command('add <source>')
     .description('Create a connector config.')
-    .option('--project-id <id>', 'PostHog project id or env var name.', 'POSTHOG_PROJECT_ID')
-    .option('--host <url>', 'PostHog host.', 'https://us.posthog.com')
-    .option('--api-key-env <name>', 'Environment variable containing the API key.', 'POSTHOG_PERSONAL_API_KEY')
+    .option('--project-id <id>', 'PostHog project id or env var name.', POSTHOG_DEFAULT_PROJECT_ID)
+    .option('--host <url>', 'PostHog host.', POSTHOG_DEFAULT_HOST)
+    .option('--api-key-env <name>', 'Environment variable containing the API key.', POSTHOG_DEFAULT_API_KEY_ENV)
     .option('--events-file <path>', 'Local JSONL event stream for `local` connectors.', 'tmp/events.jsonl')
     .option('--from-stripe-projects', 'Import PostHog connector metadata from Stripe Projects context.', false)
     .action(async (source: string, opts: { projectId: string; host: string; apiKeyEnv: string; eventsFile: string; fromStripeProjects?: boolean }) => {
@@ -90,25 +99,18 @@ export function registerConnectors(program: Command, ctx: RunCtx): void {
         const config =
           normalizedSource === 'local'
             ? defaultLocalConnector(opts.eventsFile)
-            : defaultPostHogConnector(opts.projectId);
-        if (normalizedSource === 'posthog') {
-          config.posthog = {
-            host: opts.host,
-            project_id: opts.projectId,
-            api_key_env: opts.apiKeyEnv,
-          };
-        }
+            : defaultPostHogConnector(opts.projectId, {
+                host: opts.host,
+                apiKeyEnv: opts.apiKeyEnv,
+              });
         await fs.writeFile(file, JSON.stringify(config, null, 2) + '\n');
         const shared = await readShared(ctx.getRoot());
         if (shared) {
           shared.connectors[normalizedSource] = {
             status: 'configured',
             config_file: path.relative(ctx.getRoot(), file),
-            required_env:
-              normalizedSource === 'posthog'
-                ? [opts.apiKeyEnv, ...envProjectIds(opts.projectId)]
-                : [],
-            required_scopes: normalizedSource === 'posthog' ? ['query:read', 'project:read'] : [],
+            required_env: connectorRequiredEnv(config),
+            required_scopes: connectorRequiredScopes(config.kind),
           };
           await writeShared(ctx.getRoot(), shared);
         }
@@ -208,7 +210,7 @@ export function registerConnectors(program: Command, ctx: RunCtx): void {
             nextSteps: [`growth connector validate ${source} --json`],
           };
         }
-        const apiKeyEnv = c.posthog?.api_key_env ?? (c.kind === 'posthog' ? 'POSTHOG_PERSONAL_API_KEY' : undefined);
+        const apiKeyEnv = connectorApiKeyEnv(c);
         const projectId = c.posthog?.project_id;
         const projectIdPresent =
           isEnvReference(projectId)
@@ -223,7 +225,7 @@ export function registerConnectors(program: Command, ctx: RunCtx): void {
             project_id_present: projectIdPresent,
             api_key_env: apiKeyEnv,
             api_key_present: apiKeyPresent,
-            required_scopes: c.kind === 'posthog' ? ['query:read', 'project:read'] : [],
+            required_scopes: connectorRequiredScopes(c.kind),
           },
           humanText: `${source} auth: project_id=${projectIdPresent ? 'present' : 'missing'} api_key=${apiKeyPresent ? 'present' : 'missing'}`,
           nextSteps:
@@ -242,10 +244,6 @@ function validateConnectorShapes(connectors: ConnectorConfig[]): void {
   }
 }
 
-function envProjectIds(projectId: string): string[] {
-  return /^[A-Z][A-Z0-9_]*$/.test(projectId) ? [projectId] : [];
-}
-
 async function importStripeProjectsPostHog(ctx: RunCtx, source: string) {
   const root = ctx.getRoot();
   const p = paths(root);
@@ -257,23 +255,20 @@ async function importStripeProjectsPostHog(ctx: RunCtx, source: string) {
   }
 
   const imported = await discoverStripeProjectsPostHog(root);
-  const config = defaultPostHogConnector(imported.projectId);
-  config.mappings = shouldPreserveMappings(existing?.mappings) ? existing!.mappings : defaultPostHogMappings();
-  config.posthog = {
+  const config = defaultPostHogConnector(imported.projectId, {
     host: imported.host,
-    project_id: imported.projectId,
-    api_key_env: imported.apiKeyEnv,
-  };
+    apiKeyEnv: imported.apiKeyEnv,
+    mappings: shouldPreserveMappings(existing?.mappings) ? existing!.mappings : defaultPostHogMappings(),
+  });
   await fs.writeFile(file, JSON.stringify(config, null, 2) + '\n');
   const shared = await readShared(root);
-  const requiredEnv = [imported.apiKeyEnv];
-  if (isEnvReference(imported.projectId)) requiredEnv.push(imported.projectId);
+  const requiredEnv = connectorRequiredEnv(config);
   if (shared) {
     shared.connectors[source] = {
       status: 'configured',
       config_file: path.relative(root, file),
       required_env: requiredEnv,
-      required_scopes: ['query:read', 'project:read'],
+      required_scopes: connectorRequiredScopes(config.kind),
     };
     await writeShared(root, shared);
   }
@@ -333,14 +328,14 @@ async function discoverStripeProjectsPostHog(root: string): Promise<{
       }
       const text = candidate.text;
       const projectId =
-        findString(candidate.parsed, ['POSTHOG_PROJECT_ID', 'POSTHOG_PROJECT', 'project_id_env']) ??
-        (text.includes('POSTHOG_PROJECT_ID') ? 'POSTHOG_PROJECT_ID' : undefined);
+        findString(candidate.parsed, [POSTHOG_DEFAULT_PROJECT_ID, 'POSTHOG_PROJECT', 'project_id_env']) ??
+        (text.includes(POSTHOG_DEFAULT_PROJECT_ID) ? POSTHOG_DEFAULT_PROJECT_ID : undefined);
       const apiKeyEnv =
-        findString(candidate.parsed, ['POSTHOG_PERSONAL_API_KEY', 'POSTHOG_API_KEY', 'api_key_env']) ??
-        (text.includes('POSTHOG_PERSONAL_API_KEY') ? 'POSTHOG_PERSONAL_API_KEY' : undefined);
+        findString(candidate.parsed, [POSTHOG_DEFAULT_API_KEY_ENV, 'POSTHOG_API_KEY', 'api_key_env']) ??
+        (text.includes(POSTHOG_DEFAULT_API_KEY_ENV) ? POSTHOG_DEFAULT_API_KEY_ENV : undefined);
       const host =
         findUrl(candidate.parsed, 'posthog') ??
-        (text.includes('eu.posthog.com') ? 'https://eu.posthog.com' : 'https://us.posthog.com');
+        (text.includes('eu.posthog.com') ? 'https://eu.posthog.com' : POSTHOG_DEFAULT_HOST);
       return projectId && apiKeyEnv
         ? {
             host,
@@ -392,9 +387,9 @@ function findPostHogEnvCandidate(
     const apiKeyEnv = `${base}_PERSONAL_API_KEY`;
     if (!(apiKeyEnv in env)) continue;
     const projectIdEnv = `${base}_PROJECT_ID`;
-    const projectId = projectIdEnv in env ? projectIdEnv : 'POSTHOG_PROJECT_ID' in env ? 'POSTHOG_PROJECT_ID' : undefined;
+    const projectId = projectIdEnv in env ? projectIdEnv : POSTHOG_DEFAULT_PROJECT_ID in env ? POSTHOG_DEFAULT_PROJECT_ID : undefined;
     return {
-      host: env[`${base}_HOST`] ?? env.POSTHOG_HOST ?? 'https://us.posthog.com',
+      host: env[`${base}_HOST`] ?? env.POSTHOG_HOST ?? POSTHOG_DEFAULT_HOST,
       projectId,
       apiKeyEnv,
       source_file,
@@ -407,21 +402,6 @@ function shouldPreserveMappings(mappings: ConnectorConfig['mappings'] | undefine
   if (!mappings || Object.keys(mappings).length === 0) return false;
   return Object.values(mappings).some(
     (mapping) => mapping.framework_event || mapping.payload_paths || mapping.payload_static,
-  );
-}
-
-function defaultPostHogMappings(): ConnectorConfig['mappings'] {
-  return Object.fromEntries(
-    DEFAULT_EVENT_TAXONOMY.events.map((event) => [
-      event.event,
-      {
-        payload_paths: {
-          agent_generated: 'properties.agent_generated',
-          agent_run_id: 'properties.agent_run_id',
-          session_id: 'properties.session_id',
-        },
-      },
-    ]),
   );
 }
 
@@ -473,10 +453,6 @@ async function discoverPostHogProjectIdByToken(
     }
   }
   return undefined;
-}
-
-function isEnvReference(value: unknown): value is string {
-  return typeof value === 'string' && /^[A-Z_][A-Z0-9_]*$/.test(value);
 }
 
 function safeJson(text: string): unknown {

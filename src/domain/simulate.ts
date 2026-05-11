@@ -1,5 +1,9 @@
 import { createHash } from 'node:crypto';
 import { assignVariant } from './assignment.js';
+import {
+  syntheticSimulationRunId,
+  syntheticTrafficPayload,
+} from './synthetic-traffic.js';
 import type { Store } from '../lib/store.js';
 import type { Assignment, Experiment, ExperimentEvent } from './types.js';
 
@@ -27,6 +31,7 @@ export async function simulateExperiment(
   opts: SimulateOptions,
 ): Promise<SimulateResult> {
   const seed = opts.seed ?? experiment.id;
+  const syntheticRunId = syntheticSimulationRunId(seed);
   const rng = makeRng(seed);
   const persist = opts.persist !== false;
 
@@ -78,7 +83,7 @@ export async function simulateExperiment(
         variant_id: variant.id,
         assigned_at: new Date(tsBase).toISOString(),
         source: 'simulate',
-        context: { agent_generated: true, agent_run_id: `simulate_${seed}` },
+        context: syntheticTrafficPayload(syntheticRunId),
       });
       perVariant[variant.id].users += 1;
       totalUsers += 1;
@@ -93,7 +98,7 @@ export async function simulateExperiment(
           event: denomEvent,
           timestamp: new Date(tsBase + 1000).toISOString(),
           source: 'simulate',
-          payload: syntheticPayload(seed),
+          payload: syntheticTrafficPayload(syntheticRunId),
         });
         userFiredEvents.add(denomEvent);
       }
@@ -127,7 +132,7 @@ export async function simulateExperiment(
                 tsBase + 60_000 + Math.floor(rng() * 600_000),
               ).toISOString(),
               source: 'simulate',
-              payload: syntheticPayload(seed),
+              payload: syntheticTrafficPayload(syntheticRunId),
             });
             userFiredEvents.add(m.event);
           }
@@ -142,7 +147,10 @@ export async function simulateExperiment(
             event: m.event,
             timestamp: new Date(tsBase + 60_000).toISOString(),
             source: 'simulate',
-            payload: { ...(m.value_field ? { [m.value_field]: value } : { value }), ...syntheticPayload(seed) },
+            payload: {
+              ...(m.value_field ? { [m.value_field]: value } : { value }),
+              ...syntheticTrafficPayload(syntheticRunId),
+            },
           });
           userFiredEvents.add(m.event);
         } else {
@@ -156,7 +164,7 @@ export async function simulateExperiment(
               event: m.event,
               timestamp: new Date(tsBase + 60_000 + k * 1000).toISOString(),
               source: 'simulate',
-              payload: syntheticPayload(seed),
+              payload: syntheticTrafficPayload(syntheticRunId),
             });
           }
           if (count > 0) userFiredEvents.add(m.event);
@@ -183,13 +191,6 @@ export async function simulateExperiment(
 
 function clamp01(x: number): number {
   return Math.max(0, Math.min(1, x));
-}
-
-function syntheticPayload(seed: string): Record<string, unknown> {
-  return {
-    agent_generated: true,
-    agent_run_id: `simulate_${seed}`,
-  };
 }
 
 function topologicalOrder<T extends { event: string; denominator_event?: string }>(

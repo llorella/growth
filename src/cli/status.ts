@@ -5,6 +5,7 @@ import { wrap, type RunCtx } from '../lib/runner.js';
 import { isInitialized, readShared, paths } from '../lib/state.js';
 import { Store } from '../lib/store.js';
 import { listConnectors } from '../lib/connectors.js';
+import { connectorApiKeyEnv } from '../lib/connector-catalog.js';
 import { detectFramework } from '../lib/framework.js';
 import { readEnvValue } from '../lib/env-files.js';
 
@@ -85,7 +86,7 @@ export function registerStatus(program: Command, ctx: RunCtx): void {
 
         const experiment = experimentId ? await store.getExperiment(experimentId) : null;
         const connectorReadiness = await Promise.all(connectors.map(async (c) => {
-          const apiKeyEnv = c.posthog?.api_key_env ?? (c.kind === 'posthog' ? 'POSTHOG_PERSONAL_API_KEY' : undefined);
+          const apiKeyEnv = connectorApiKeyEnv(c);
           return {
             source: c.source,
             kind: c.kind,

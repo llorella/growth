@@ -549,6 +549,7 @@ test('preflight complete-local finishes prepared run from synthetic JSONL events
     assert.match(preflight._next.command, /growth preflight complete-local/);
     mkdirSync(path.join(root, 'tmp'), { recursive: true });
     const events = [];
+    const eventTimestamp = preflight.data.run.event_window.after;
     for (const [index, agent] of preflight.data.run.agents.entries()) {
       for (const event of onboardingEvents()) {
         events.push(
@@ -558,6 +559,7 @@ test('preflight complete-local finishes prepared run from synthetic JSONL events
             event,
             agent.variant_id,
             agent.agent_id,
+            eventTimestamp,
           ),
         );
       }
@@ -607,6 +609,45 @@ test('preflight dry-run fails and prints synthetic label evidence for unlabeled 
     ]);
     assert.equal(dryRun.data.audit.recommendation, 'do_not_launch');
     assert.match(dryRun.data.markdown, /Synthetic Label Evidence/);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('preflight dry-run fails invalid event timestamps as untrustworthy evidence', () => {
+  const root = tempRoot();
+  try {
+    run(root, ['init', '--json']);
+    run(root, ['experiment', 'create', 'onboarding-flow', '--template', 'onboarding-activation', '--json']);
+    mkdirSync(path.join(root, 'tmp'), { recursive: true });
+    const events = [];
+    for (const variant of ['control', 'treatment']) {
+      for (const [index, event] of onboardingEvents().entries()) {
+        events.push(onboardingEventLine('onboarding-flow', `evt-${variant}-${index}`, event, variant, true));
+      }
+    }
+    events.push(
+      eventLine('onboarding-flow', 'bad-ts', 'experiment_viewed', 'not-a-date', {
+        agentGenerated: true,
+        agentRunId: 'agent-control',
+        userId: 'bad-timestamp-user',
+        variant: 'control',
+      }),
+    );
+    writeFileSync(path.join(root, 'tmp', 'events.jsonl'), events.join('\n') + '\n');
+
+    const dryRun = run(root, [
+      'preflight',
+      'dry-run',
+      'onboarding-flow',
+      '--events-file',
+      'tmp/events.jsonl',
+      '--json',
+    ]);
+    assert.equal(dryRun.data.audit.recommendation, 'fix_app_instrumentation');
+    const timestampCheck = dryRun.data.audit.checks.find((check) => check.id === 'event_window_timestamps');
+    assert.equal(timestampCheck.status, 'fail');
+    assert.equal(timestampCheck.evidence.rejected[0].reason, 'invalid_timestamp');
   } finally {
     cleanup(root);
   }
@@ -1257,7 +1298,14 @@ function onboardingEventLine(experimentId, eventId, event, variant, labeled) {
   });
 }
 
-function preflightEventLine(experimentId, eventId, event, variant, agentRunId) {
+function preflightEventLine(
+  experimentId,
+  eventId,
+  event,
+  variant,
+  agentRunId,
+  timestamp = '2026-01-01T00:00:00.000Z',
+) {
   return JSON.stringify({
     event,
     properties: {
@@ -1266,7 +1314,7 @@ function preflightEventLine(experimentId, eventId, event, variant, agentRunId) {
       variant_id: variant,
       user_id: `user-${agentRunId}`,
       session_id: `session-${agentRunId}`,
-      timestamp: '2026-01-01T00:00:00.000Z',
+      timestamp,
       agent_generated: true,
       agent_run_id: agentRunId,
     },

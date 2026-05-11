@@ -16,13 +16,18 @@ import { listConnectors } from '../lib/connectors.js';
 import { preflightReportSchema } from '../domain/schema.js';
 import type { AgentPacketSummary, GrowthRun } from '../domain/types.js';
 import {
+  allLocalEvidenceWindow,
+  closeEventWindow,
+  openEventWindow,
+} from '../domain/event-window.js';
+import {
   buildAgentUrl,
-  expectedEvents,
   launchManual,
   packetPrompt,
   packetScenario,
   packetVariant,
 } from '../preflight/packets.js';
+import { requiredPreflightEvents } from '../preflight/coverage.js';
 import { auditPreflight } from '../preflight/audit.js';
 import { auditMarkdown } from '../preflight/markdown.js';
 import {
@@ -116,7 +121,7 @@ export function registerPreflight(program: Command, ctx: RunCtx): void {
                   may_modify_files: false,
                   allowed_url: url,
                   scenario,
-                  expected_events: expectedEvents(exp),
+                  expected_events: requiredPreflightEvents(exp),
                 },
                 null,
                 2,
@@ -159,13 +164,14 @@ export function registerPreflight(program: Command, ctx: RunCtx): void {
             });
           }
 
+          const createdAt = new Date().toISOString();
           const run: GrowthRun = {
             id: runId,
             type: 'preflight',
             experiment_id: experimentId,
             status: 'prepared',
-            created_at: new Date().toISOString(),
-            event_window: { after: new Date().toISOString() },
+            created_at: createdAt,
+            event_window: openEventWindow(createdAt),
             agents,
             artifacts: {
               run_dir: path.relative(ctx.getRoot(), runDir),
@@ -307,7 +313,7 @@ export function registerPreflight(program: Command, ctx: RunCtx): void {
         const run = await readRun(ctx.getRoot(), runId);
         run.status = 'completed';
         run.completed_at = new Date().toISOString();
-        run.event_window = { ...(run.event_window ?? { after: run.created_at }), before: run.completed_at };
+        run.event_window = closeEventWindow(run.event_window, run.created_at, run.completed_at);
         await writeRun(ctx.getRoot(), run);
         const connectors = await listConnectors(ctx.getRoot());
         const preferredSource = connectors.find((connector) => connector.source === 'local')?.source ?? connectors[0]?.source;
@@ -358,7 +364,7 @@ export function registerPreflight(program: Command, ctx: RunCtx): void {
           : synthesizeReportsFromEvents(run, exp, events);
         run.status = 'completed';
         run.completed_at = new Date().toISOString();
-        run.event_window = { ...(run.event_window ?? { after: run.created_at }), before: run.completed_at };
+        run.event_window = closeEventWindow(run.event_window, run.created_at, run.completed_at);
         run.artifacts.events_file = path.relative(ctx.getRoot(), path.resolve(ctx.getRoot(), opts.eventsFile));
         if (opts.reportsDir) {
           run.artifacts.reports_dir = path.relative(ctx.getRoot(), path.resolve(ctx.getRoot(), opts.reportsDir));
@@ -410,7 +416,7 @@ export function registerPreflight(program: Command, ctx: RunCtx): void {
           status: 'completed',
           created_at: now,
           completed_at: now,
-          event_window: { after: '1970-01-01T00:00:00.000Z', before: now },
+          event_window: allLocalEvidenceWindow(now),
           agents: reports.map((report, index) => ({
             agent_id: `dryrun_agent_${index + 1}`,
             browser: false,
