@@ -41,6 +41,8 @@ node /path/to/growth/dist/index.js --root /path/to/product-repo status --json
 
 `growth` requires Node.js 18 or newer.
 
+The npm package name is `@qxp/growth`; the installed binary remains `growth`.
+
 ## Develop
 
 ```sh
@@ -62,6 +64,10 @@ After `npm run build`, the compiled binaries are:
 node dist/index.js --help
 node dist/mcp.js
 ```
+
+The MCP server exposes typed tools such as `growth_preflight_prepare` and
+`growth_analyze`. Each tool accepts named JSON arguments instead of a generic
+CLI `args` array.
 
 ## Demo
 
@@ -118,6 +124,11 @@ growth preflight complete-local <run_id> --events-file tmp/events.jsonl --json
 growth preflight pull <run_id> --source local --json
 growth preflight audit <run_id> --json
 ```
+
+`ready_for_provider_preflight` means local synthetic traffic passed. It is not a
+ship decision. `provider_preflight_passed` means synthetic events were pulled
+through a configured provider; real-user launch and measurement still happen via
+`growth analyze --segment real-users`.
 
 For provider-backed analysis, configure a connector, pull events, and analyze:
 

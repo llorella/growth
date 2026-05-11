@@ -13,6 +13,12 @@ import type { Store } from '../lib/store.js';
 
 type RawValuesByVariant = Record<string, number[]>;
 
+interface TrafficMix {
+  total_events: number;
+  synthetic_events: number;
+  real_events: number;
+}
+
 function filterEventsBySegment(events: ExperimentEvent[], segment: AnalysisSegment): ExperimentEvent[] {
   if (segment === 'all') return events;
   if (segment === 'agent-generated') {
@@ -24,10 +30,15 @@ function filterEventsBySegment(events: ExperimentEvent[], segment: AnalysisSegme
 export async function analyzeExperiment(
   store: Store,
   experiment: Experiment,
-  segment: AnalysisSegment = 'all',
+  segment: AnalysisSegment = 'real-users',
 ): Promise<AnalysisResult> {
   const allEvents = await store.readEvents(experiment.id);
   const events = filterEventsBySegment(allEvents, segment);
+  const trafficMix: TrafficMix = {
+    total_events: events.length,
+    synthetic_events: events.filter((event) => event.payload?.agent_generated === true).length,
+    real_events: events.filter((event) => event.payload?.agent_generated !== true).length,
+  };
   const syntheticOnly =
     events.length > 0 && events.every((event) => event.payload?.agent_generated === true);
   const allAssignments = await store.readAssignments(experiment.id);
@@ -66,7 +77,14 @@ export async function analyzeExperiment(
     total_users: totalUsers,
     per_variant: perVariant,
     metrics: metricAnalyses,
-    recommendation: makeRecommendation(experiment, metricAnalyses, runtimeDays, segment, syntheticOnly),
+    recommendation: makeRecommendation(
+      experiment,
+      metricAnalyses,
+      runtimeDays,
+      segment,
+      syntheticOnly,
+      trafficMix,
+    ),
     generated_at: new Date().toISOString(),
     segment,
   };
@@ -183,6 +201,7 @@ function compareToControl(
   const c = variants[controlId];
   const v = variants[variantId];
   const alpha = experiment.sample_size.alpha;
+  const minPerVariant = Math.max(30, experiment.sample_size.per_variant ?? 30);
 
   if (metric.type === 'proportion') {
     const sig = proportionSignificance(
@@ -191,6 +210,7 @@ function compareToControl(
       v.n,
       v.successes ?? 0,
       alpha,
+      minPerVariant,
     );
     return {
       variant_id: variantId,
@@ -207,7 +227,7 @@ function compareToControl(
   if (metric.type === 'continuous') {
     const cVals = rawByVariant[controlId] ?? [];
     const tVals = rawByVariant[variantId] ?? [];
-    const sig = continuousSignificance(cVals, tVals, alpha);
+    const sig = continuousSignificance(cVals, tVals, alpha, minPerVariant);
     return {
       variant_id: variantId,
       baseline_id: controlId,
@@ -221,7 +241,7 @@ function compareToControl(
   }
 
   if (metric.type === 'count') {
-    if ((c.n ?? 0) < 30 || (v.n ?? 0) < 30) {
+    if ((c.n ?? 0) < minPerVariant || (v.n ?? 0) < minPerVariant) {
       return {
         variant_id: variantId,
         baseline_id: controlId,
@@ -265,6 +285,7 @@ function makeRecommendation(
   runtimeDays: number,
   segment: AnalysisSegment,
   syntheticOnly: boolean,
+  trafficMix: TrafficMix,
 ): Recommendation {
   if (segment === 'agent-generated' || syntheticOnly) {
     return {
@@ -276,6 +297,19 @@ function makeRecommendation(
         'Start the experiment for real users.',
         'Keep monitoring guardrails.',
         'Use preflight reports for qualitative UX issues.',
+      ],
+    };
+  }
+
+  if (segment === 'all' && trafficMix.synthetic_events > 0 && trafficMix.real_events > 0) {
+    return {
+      action: 'keep_running',
+      confidence: 'low',
+      reasoning:
+        'Analysis includes mixed real-user and agent-generated synthetic traffic. Re-run with --segment real-users before making any ship decision.',
+      next_steps: [
+        'Run growth analyze <experiment_id> --segment real-users --json.',
+        'Use growth analyze <experiment_id> --segment agent-generated --json only for preflight and instrumentation checks.',
       ],
     };
   }
@@ -334,14 +368,15 @@ function makeRecommendation(
   }
 
   if (primaryComparison.status === 'insufficient_data') {
+    const minPerVariant = Math.max(30, experiment.sample_size.per_variant ?? 30);
     return {
       action: 'keep_running',
       confidence: 'low',
-      reasoning: `Need at least 30 users per variant. Currently ${
+      reasoning: `Need at least ${minPerVariant} users per variant. Currently ${
         primary.variants[experiment.variants[0].id].n
       } / ${primary.variants[primaryComparison.variant_id].n}.`,
       next_steps: [
-        `Continue running. Required sample size per variant: ${experiment.sample_size.per_variant ?? 'not computed'}.`,
+        `Continue running. Required sample size per variant: ${minPerVariant}.`,
       ],
     };
   }

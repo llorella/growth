@@ -48,6 +48,14 @@ export interface ConnectorConfig {
   mappings: Record<string, ConnectorMapping>;
 }
 
+export interface ConnectorValidationIssue {
+  source: string;
+  message: string;
+  path?: string;
+}
+
+const CONNECTOR_KINDS = new Set(['posthog', 'segment', 'stripe', 'native-app', 'warehouse', 'custom']);
+
 export async function listConnectors(root: string): Promise<ConnectorConfig[]> {
   const dir = paths(root).connectorsDir;
   let files: string[] = [];
@@ -77,6 +85,71 @@ export async function getConnector(root: string, source: string): Promise<Connec
   } catch {
     return null;
   }
+}
+
+export function validateConnectorConfig(connector: ConnectorConfig): ConnectorValidationIssue[] {
+  const issues: ConnectorValidationIssue[] = [];
+  const source = typeof connector.source === 'string' && connector.source ? connector.source : '(unknown)';
+  const requiredStringFields = ['source', 'event_name_path', 'user_id_path', 'experiment_id_path', 'variant_id_path'];
+  for (const field of requiredStringFields) {
+    const value = (connector as unknown as Record<string, unknown>)[field];
+    if (typeof value !== 'string' || value.length === 0) {
+      issues.push({ source, message: `missing ${field}`, path: field });
+    }
+  }
+  if (!CONNECTOR_KINDS.has(connector.kind)) {
+    issues.push({ source, message: `unsupported kind ${String(connector.kind)}`, path: 'kind' });
+  }
+  if (connector.kind === 'posthog') {
+    if (!isRecord(connector.posthog)) {
+      issues.push({ source, message: 'missing posthog config block', path: 'posthog' });
+    } else {
+      if (typeof connector.posthog.project_id !== 'string' && typeof connector.posthog.project_id !== 'number') {
+        issues.push({ source, message: 'missing posthog.project_id', path: 'posthog.project_id' });
+      }
+      if (connector.posthog.host !== undefined && typeof connector.posthog.host !== 'string') {
+        issues.push({ source, message: 'posthog.host must be a string', path: 'posthog.host' });
+      }
+      if (connector.posthog.api_key_env !== undefined && typeof connector.posthog.api_key_env !== 'string') {
+        issues.push({ source, message: 'posthog.api_key_env must be a string', path: 'posthog.api_key_env' });
+      }
+    }
+  }
+  if (connector.kind === 'native-app') {
+    if (!isRecord(connector.local) || typeof connector.local.events_file !== 'string' || connector.local.events_file.length === 0) {
+      issues.push({ source, message: 'missing local.events_file', path: 'local.events_file' });
+    }
+  }
+  if (!isRecord(connector.mappings)) {
+    issues.push({ source, message: 'missing mappings object', path: 'mappings' });
+    return issues;
+  }
+  for (const [eventName, mapping] of Object.entries(connector.mappings)) {
+    const basePath = `mappings.${eventName}`;
+    if (!isRecord(mapping)) {
+      issues.push({ source, message: 'mapping must be an object', path: basePath });
+      continue;
+    }
+    const frameworkEvent = mapping.framework_event;
+    if (frameworkEvent !== undefined && typeof frameworkEvent !== 'string') {
+      issues.push({ source, message: 'framework_event must be a string', path: `${basePath}.framework_event` });
+    }
+    if (mapping.payload_paths !== undefined) {
+      if (!isRecord(mapping.payload_paths)) {
+        issues.push({ source, message: 'payload_paths must be an object', path: `${basePath}.payload_paths` });
+      } else {
+        for (const [key, value] of Object.entries(mapping.payload_paths)) {
+          if (typeof value !== 'string' || value.length === 0) {
+            issues.push({ source, message: `payload path for ${key} must be a string`, path: `${basePath}.payload_paths.${key}` });
+          }
+        }
+      }
+    }
+    if (mapping.payload_static !== undefined && !isRecord(mapping.payload_static)) {
+      issues.push({ source, message: 'payload_static must be an object', path: `${basePath}.payload_static` });
+    }
+  }
+  return issues;
 }
 
 /**
@@ -317,4 +390,8 @@ function sortObject(value: unknown): unknown {
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([k, v]) => [k, sortObject(v)]),
   );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
 }

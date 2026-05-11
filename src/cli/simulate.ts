@@ -47,7 +47,7 @@ export function registerSimulate(program: Command, ctx: RunCtx): void {
                 ([v, p]) => `  ${v}: ${p.users} users`,
               ),
             ].join('\n'),
-            nextSteps: opts.persist === false ? [] : [`growth analyze ${id} --json`],
+            nextSteps: opts.persist === false ? [] : [`growth analyze ${id} --segment agent-generated --json`],
           };
         });
       },

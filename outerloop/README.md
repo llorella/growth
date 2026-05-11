@@ -58,7 +58,7 @@ Start with `summary.json`, then inspect a failing iteration's `commands.json`,
 The current latest local run,
 `outerloop/runs/local-dogfood-20260506T160500Z`, passed four iterations:
 `onboarding-saas` and `pricing-saas`, two times each. Each iteration ran 18
-`growth` commands and ended with `ready_for_posthog_preflight`.
+`growth` commands and ended with `ready_for_provider_preflight`.
 
 That recommendation is intentional: local synthetic traffic can prove
 instrumentation shape, event windows, report attachment, variant reachability,
@@ -115,9 +115,9 @@ leak into collected artifacts.
 Observed full-run artifacts currently show:
 
 - `first-real-run`: passed. It includes two preflight audits; an earlier run was
-  `do_not_launch`, and a later run reached `ready_for_real_users`.
+  `do_not_launch`, and a later run reached `provider_preflight_passed`.
 - `clean-real-run`: passed. It includes three preflight audits that moved from
-  `fix_instrumentation` to `do_not_launch` to `ready_for_real_users`.
+  `fix_instrumentation` to `do_not_launch` to `provider_preflight_passed`.
 - `neutral-growth-refactor`: contains builder and rollout artifacts but no
   `evaluation.json`; treat it as prompt and harness development evidence, not as
   a pass/fail run.
@@ -137,8 +137,8 @@ When reading a run, separate three questions:
    `audit.md`.
 
 3. Did the recommendation mean what the demo claims?
-   `ready_for_posthog_preflight` means local synthetic evidence passed and the
-   next step is provider-backed validation. `ready_for_real_users` should require
+   `ready_for_provider_preflight` means local synthetic evidence passed and the
+   next step is provider-backed validation. `provider_preflight_passed` should require
    provider-backed evidence. `fix_instrumentation` and `do_not_launch` are useful
    failures; they show the loop found something actionable.
 

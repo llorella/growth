@@ -125,7 +125,7 @@ async function runFixture(fixture, iteration) {
   assertNext(verify, new RegExp(`growth preflight prepare ${escapeRegExp(spec.id)}`), 'instrumentation verify');
 
   const dryRun = run(['preflight', 'dry-run', spec.id, '--events-file', 'tmp/events.jsonl', '--json']);
-  if (dryRun.data?.audit?.recommendation !== 'ready_for_posthog_preflight') {
+  if (dryRun.data?.audit?.recommendation !== 'ready_for_provider_preflight') {
     throw new Error(`${runId}: dry-run recommendation was ${dryRun.data?.audit?.recommendation}.`);
   }
   assertNext(dryRun, new RegExp(`growth preflight prepare ${escapeRegExp(spec.id)}`), 'preflight dry-run');
@@ -169,7 +169,7 @@ async function runFixture(fixture, iteration) {
   }
 
   const audit = run(['preflight', 'audit', preflightRun.id, '--json']);
-  if (audit.data?.audit?.recommendation !== 'ready_for_posthog_preflight') {
+  if (audit.data?.audit?.recommendation !== 'ready_for_provider_preflight') {
     throw new Error(`${runId}: final audit recommendation was ${audit.data?.audit?.recommendation}.`);
   }
   assertNext(audit, /growth connector import stripe-projects --json|growth preflight pull .* --source [^ ]+ --json/, 'preflight audit');
@@ -324,13 +324,13 @@ function dogfoodChecklist(items) {
     ['plan_prompt_packet_guides_agent', /growth instrumentation verify/.test((items.plan.data?.prompt_packet?.commands_after_editing ?? []).join('\n'))],
     ['instrumentation_verify_passes', items.verify.data?.ok === true],
     ['verify_guides_to_preflight_prepare', /growth preflight prepare/.test(items.verify._next?.command ?? '')],
-    ['dry_run_ready_for_provider_preflight', items.dryRun.data?.audit?.recommendation === 'ready_for_posthog_preflight'],
+    ['dry_run_ready_for_provider_preflight', items.dryRun.data?.audit?.recommendation === 'ready_for_provider_preflight'],
     ['prepare_writes_agent_packets', (items.prepared.data?.run?.agents ?? []).length > 0],
     ['prepare_guides_to_completion', /growth preflight complete-local/.test(items.prepared._next?.command ?? '')],
     ['reports_attached', (items.attachedReports ?? []).length === (items.prepared.data?.run?.agents ?? []).length],
     ['complete_guides_to_pull', /growth preflight pull/.test(items.complete._next?.command ?? '')],
     ['pull_guides_to_audit', /growth preflight audit/.test(items.pull._next?.command ?? '')],
-    ['audit_ready_for_provider_preflight', items.audit.data?.audit?.recommendation === 'ready_for_posthog_preflight'],
+    ['audit_ready_for_provider_preflight', items.audit.data?.audit?.recommendation === 'ready_for_provider_preflight'],
     ['audit_guides_to_provider_validation', /growth connector import stripe-projects --json|growth preflight pull .* --source [^ ]+ --json/.test(items.audit._next?.command ?? '')],
   ];
   return checks.map(([id, ok, evidence]) => ({ id, ok: Boolean(ok), ...(evidence ? { evidence } : {}) }));

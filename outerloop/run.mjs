@@ -217,7 +217,7 @@ async function evaluate({ baseline, after }) {
     check('experiment_exists', (await listFiles(path.join(growthDir, 'experiments'), (name) => name.endsWith('.json'))).length > 0),
     check('preflight_run_exists', preflightRuns.length > 0, { preflight_runs: preflightRuns }),
     check('preflight_audit_exists', auditFiles.length > 0, { audit_files: auditFiles.map((file) => path.relative(runDir, file)) }),
-    check('preflight_ready_for_real_users', /Recommendation:\s*ready_for_real_users/.test(auditText)),
+    check('preflight_provider_preflight_passed', /Recommendation:\s*provider_preflight_passed/.test(auditText)),
     check('no_known_secret_leakage', !(await leakedSecretNames(runDir)).length, {
       leaked_secret_names: await leakedSecretNames(runDir),
     }),
@@ -288,7 +288,7 @@ Expected workflow:
 14. Use agent-browser to execute each generated preflight packet URL.
 15. Attach agent reports, complete the preflight, pull from PostHog, and run growth preflight audit.
 
-Finish only after the latest preflight audit is ready_for_real_users, or after documenting the exact blocker if that is impossible.`;
+Finish only after the latest preflight audit is provider_preflight_passed, or after documenting the exact blocker if that is impossible.`;
 }
 
 async function runCommand(command, args, options) {

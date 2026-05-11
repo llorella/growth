@@ -1,5 +1,5 @@
 {
-  "name": "growth",
+  "name": "@qxp/growth",
   "version": "0.1.0",
   "description": "Agent-native growth experimentation control plane.",
   "bin": {
@@ -10,8 +10,16 @@
     "build": "tsc",
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
+    "prepack": "npm run build",
     "dogfood:local": "npm run build && node outerloop/dogfood-local.mjs",
     "test": "npm run build && node --test test/*.test.js"
+  },
+  "files": [
+    "dist/",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
   },
   "dependencies": {
     "ajv": "^8.17.1",

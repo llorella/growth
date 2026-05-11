@@ -36,22 +36,29 @@ export function registerEnv(program: Command, ctx: RunCtx): void {
     .command('set')
     .description('Write or update a key in .env.local without printing the value.')
     .requiredOption('--key <key>', 'Environment key.')
-    .option('--value <value>', 'Environment value.')
+    .option('--value <value>', 'Deprecated unsafe literal value source; use --from-env or --stdin.')
     .option('--from-env <key>', 'Read the value from this process environment variable without echoing it.')
+    .option('--stdin', 'Read the value from stdin without echoing it in process args.')
     .option('--file <path>', 'Env file path relative to the repo root.', '.env.local')
-    .action(async (opts: { key: string; value?: string; fromEnv?: string; file: string }) => {
+    .action(async (opts: { key: string; value?: string; fromEnv?: string; stdin?: boolean; file: string }) => {
       await wrap('growth env set', ctx, async () => {
         await requireInitialized(ctx.getRoot());
         if (!/^[A-Z_][A-Z0-9_]*$/.test(opts.key)) {
           throw new GrowthError('invalid_env_key', 'Environment keys must be uppercase snake case.');
         }
-        if (!!opts.value === !!opts.fromEnv) {
-          throw new GrowthError('invalid_env_value_source', 'Provide exactly one of --value or --from-env.');
+        if (opts.value !== undefined) {
+          throw new GrowthError(
+            'unsafe_secret_argument',
+            'Do not pass secret values via --value because process args and shell history can expose them. Use --from-env or --stdin.',
+          );
+        }
+        if (Number(!!opts.fromEnv) + Number(!!opts.stdin) !== 1) {
+          throw new GrowthError('invalid_env_value_source', 'Provide exactly one of --from-env or --stdin.');
         }
         if (opts.fromEnv && !/^[A-Z_][A-Z0-9_]*$/.test(opts.fromEnv)) {
           throw new GrowthError('invalid_env_key', '--from-env must name an uppercase snake case environment variable.');
         }
-        const value = opts.fromEnv ? process.env[opts.fromEnv] : opts.value;
+        const value = opts.stdin ? await readStdinValue() : process.env[opts.fromEnv!];
         if (value === undefined) {
           throw new GrowthError('missing_source_env', `${opts.fromEnv} is not present in the current process environment.`);
         }
@@ -62,7 +69,7 @@ export function registerEnv(program: Command, ctx: RunCtx): void {
             file: path.relative(ctx.getRoot(), file),
             key: opts.key,
             changed,
-            source: opts.fromEnv ? { from_env: opts.fromEnv, present: true } : { literal: true },
+            source: opts.fromEnv ? { from_env: opts.fromEnv, present: true } : { stdin: true },
             value: '[redacted]',
           },
           humanText: `${opts.key} ${changed ? 'updated' : 'already set'} in ${path.relative(ctx.getRoot(), file)}.`,
@@ -97,4 +104,12 @@ async function upsertEnv(file: string, key: string, value: string): Promise<bool
   }
   await fs.writeFile(file, next.filter((line, i) => line || i < next.length - 1).join('\n') + '\n');
   return changed;
+}
+
+async function readStdinValue(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks).toString('utf8').replace(/\r?\n$/, '');
 }

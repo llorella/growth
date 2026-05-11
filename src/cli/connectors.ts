@@ -12,6 +12,7 @@ import {
   defaultPostHogConnector,
   getConnector,
   listConnectors,
+  validateConnectorConfig,
   type ConnectorConfig,
 } from '../lib/connectors.js';
 import { paths } from '../lib/paths.js';
@@ -172,15 +173,16 @@ export function registerConnectors(program: Command, ctx: RunCtx): void {
         if (source && !connectors.some((c) => c.source === source)) {
           throw new GrowthError('not_found', `Connector "${source}" not found.`);
         }
-        validateConnectorShapes(source ? connectors.filter((c) => c.source === source) : connectors);
-        assertCoverage(experiments, connectors);
+        const selectedConnectors = source ? connectors.filter((c) => c.source === source) : connectors;
+        validateConnectorShapes(selectedConnectors);
+        assertCoverage(experiments, selectedConnectors);
         return {
           data: {
             ok: true,
             experiments: experiments.length,
-            connectors: connectors.length,
+            connectors: selectedConnectors.length,
           },
-          humanText: `Coverage OK across ${experiments.length} experiment(s) and ${connectors.length} connector(s).`,
+          humanText: `Coverage OK across ${experiments.length} experiment(s) and ${selectedConnectors.length} connector(s).`,
         };
       });
     });
@@ -234,17 +236,7 @@ export function registerConnectors(program: Command, ctx: RunCtx): void {
 }
 
 function validateConnectorShapes(connectors: ConnectorConfig[]): void {
-  const errors: Array<{ source: string; message: string }> = [];
-  for (const c of connectors) {
-    for (const key of ['source', 'kind', 'event_name_path', 'user_id_path', 'experiment_id_path', 'variant_id_path']) {
-      if (!(c as unknown as Record<string, unknown>)[key]) {
-        errors.push({ source: c.source || '(unknown)', message: `missing ${key}` });
-      }
-    }
-    if (!c.mappings || typeof c.mappings !== 'object') {
-      errors.push({ source: c.source || '(unknown)', message: 'missing mappings object' });
-    }
-  }
+  const errors = connectors.flatMap(validateConnectorConfig);
   if (errors.length) {
     throw new GrowthError('invalid_connector', 'Connector validation failed.', { errors });
   }

@@ -212,11 +212,16 @@ export function registerInstrumentation(program: Command, ctx: RunCtx): void {
             endpoint_check: endpointCheck,
             actual_event_check: actualEventCheck,
             instrumentation_run: instrumentationRun,
+            static_contract_ok: connectorCoverageOk,
+            actual_events_verified: actualEventCheck ? actualEventCheck.ok : false,
+            ready_for_preflight: ok,
             ok,
           },
           warnings,
           humanText: ok
-            ? `Instrumentation contract for ${exp.id} is statically verifiable.`
+            ? actualEventCheck
+              ? `Instrumentation contract for ${exp.id} is verified against emitted events.`
+              : `Instrumentation contract for ${exp.id} is statically verifiable.`
             : `Instrumentation contract for ${exp.id} has warnings.`,
           nextSteps:
             !connectorCoverageOk ||

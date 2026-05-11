@@ -13,7 +13,7 @@ export function registerAnalyze(program: Command, ctx: RunCtx): void {
   program
     .command('analyze <id>')
     .description('Run statistical analysis and produce a conservative recommendation.')
-    .option('--segment <name>', 'all, real-users, or agent-generated.', 'all')
+    .option('--segment <name>', 'all, real-users, or agent-generated.', 'real-users')
     .action(async (id: string, opts: { segment: AnalysisSegment }) => {
       await wrap('growth analyze', ctx, async () => {
         await requireInitialized(ctx.getRoot());

@@ -5,6 +5,7 @@ import { requireInitialized } from '../lib/gating.js';
 import { Store } from '../lib/store.js';
 import { listConnectors, assertCoverage } from '../lib/connectors.js';
 import { paths } from '../lib/paths.js';
+import { GrowthError } from '../lib/envelope.js';
 
 export function registerValidate(program: Command, ctx: RunCtx): void {
   program
@@ -37,18 +38,23 @@ export function registerValidate(program: Command, ctx: RunCtx): void {
             message: '.growth/event-taxonomy.json is missing or invalid JSON.',
           });
         }
+        if (warnings.length > 0) {
+          throw new GrowthError('validation_failed', `Validation failed with ${warnings.length} warning(s).`, {
+            ok: false,
+            experiments: experiments.length,
+            connectors: connectors.length,
+            warnings,
+          });
+        }
         return {
           data: {
-            ok: warnings.length === 0,
+            ok: true,
             experiments: experiments.length,
             connectors: connectors.length,
             warnings,
           },
           warnings,
-          humanText:
-            warnings.length === 0
-              ? `Validation OK across ${experiments.length} experiment(s).`
-              : `Validation completed with ${warnings.length} warning(s).`,
+          humanText: `Validation OK across ${experiments.length} experiment(s).`,
         };
       });
     });

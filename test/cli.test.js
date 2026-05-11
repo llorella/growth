@@ -95,8 +95,145 @@ test('core experiment flow labels simulated traffic as synthetic-only', () => {
     assert.equal(preflight.data.run.agents.length, 1);
 
     run(root, ['simulate', 'my-test', '--days', '7', '--daily', '60', '--lift', '0.3', '--json']);
-    const analysis = run(root, ['analyze', 'my-test', '--json']);
+    const defaultAnalysis = run(root, ['analyze', 'my-test', '--json']);
+    assert.equal(defaultAnalysis.data.segment, 'real-users');
+    assert.notEqual(defaultAnalysis.data.recommendation.action, 'ship_treatment');
+    const analysis = run(root, ['analyze', 'my-test', '--segment', 'agent-generated', '--json']);
     assert.equal(analysis.data.recommendation.action, 'synthetic_only_no_ship');
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('all-segment analysis refuses mixed synthetic and real traffic ship decisions', () => {
+  const root = tempRoot();
+  try {
+    run(root, ['init', '--json']);
+    run(root, ['experiment', 'create', 'my-test', '--template', 'conversion-test', '--json']);
+    run(root, ['connector', 'add', 'local', '--events-file', 'tmp/events.jsonl', '--json']);
+    mkdirSync(path.join(root, 'tmp'), { recursive: true });
+    writeFileSync(
+      path.join(root, 'tmp', 'events.jsonl'),
+      [
+        eventLine('my-test', 'real-view', 'experiment_viewed', '2026-01-01T00:00:00.000Z', {
+          agentGenerated: false,
+          agentRunId: null,
+          userId: 'real-user-1',
+        }),
+        eventLine('my-test', 'synthetic-view', 'experiment_viewed', '2026-01-01T00:01:00.000Z', {
+          agentGenerated: true,
+          agentRunId: 'synthetic-run-1',
+          userId: 'synthetic-user-1',
+        }),
+      ].join('\n') + '\n',
+    );
+    run(root, [
+      'pull',
+      'my-test',
+      '--source',
+      'local',
+      '--after',
+      '2026-01-01T00:00:00.000Z',
+      '--before',
+      '2026-01-02T00:00:00.000Z',
+      '--json',
+    ]);
+    const analysis = run(root, ['analyze', 'my-test', '--segment', 'all', '--json']);
+    assert.equal(analysis.data.segment, 'all');
+    assert.equal(analysis.data.recommendation.action, 'keep_running');
+    assert.match(analysis.data.recommendation.reasoning, /mixed real-user and agent-generated/);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('analysis uses configured sample size before recommending ship', () => {
+  const root = tempRoot();
+  try {
+    run(root, ['init', '--json']);
+    const spec = {
+      id: 'sample-size-test',
+      name: 'Sample size test',
+      hypothesis:
+        'We believe a stronger call to action will increase conversion because users understand the next step.',
+      status: 'running',
+      variants: [
+        { id: 'control', name: 'Control', weight: 50 },
+        { id: 'treatment', name: 'Treatment', weight: 50 },
+      ],
+      metrics: [
+        {
+          id: 'conversion_rate',
+          name: 'Conversion rate',
+          role: 'primary',
+          type: 'proportion',
+          direction: 'higher_is_better',
+          event: 'conversion_completed',
+          denominator_event: 'experiment_viewed',
+        },
+      ],
+      sample_size: {
+        baseline_rate: 0.2,
+        minimum_detectable_effect: 0.2,
+        power: 0.8,
+        alpha: 0.05,
+        per_variant: 500,
+      },
+      schedule: { max_duration_days: 30, min_runtime_days: 7 },
+      auto_stop: { on_significance: true, on_guardrail_breach: true, min_runtime_days: 7 },
+      targeting: { rules: [] },
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-01T00:00:00.000Z',
+      started_at: '2026-01-01T00:00:00.000Z',
+    };
+    const specFile = path.join(root, 'spec.json');
+    writeFileSync(specFile, JSON.stringify(spec) + '\n');
+    run(root, ['experiment', 'create', 'sample-size-test', '--from-file', specFile, '--json']);
+    run(root, ['connector', 'add', 'local', '--events-file', 'tmp/events.jsonl', '--json']);
+    mkdirSync(path.join(root, 'tmp'), { recursive: true });
+    const lines = [];
+    for (let i = 0; i < 40; i++) {
+      const ts = new Date(Date.parse('2026-01-02T00:00:00.000Z') + i * 1000).toISOString();
+      lines.push(
+        eventLine('sample-size-test', `control-view-${i}`, 'experiment_viewed', ts, {
+          agentGenerated: false,
+          agentRunId: null,
+          userId: `control-user-${i}`,
+          variant: 'control',
+        }),
+      );
+      lines.push(
+        eventLine('sample-size-test', `treatment-view-${i}`, 'experiment_viewed', ts, {
+          agentGenerated: false,
+          agentRunId: null,
+          userId: `treatment-user-${i}`,
+          variant: 'treatment',
+        }),
+      );
+      lines.push(
+        eventLine('sample-size-test', `treatment-convert-${i}`, 'conversion_completed', ts, {
+          agentGenerated: false,
+          agentRunId: null,
+          userId: `treatment-user-${i}`,
+          variant: 'treatment',
+        }),
+      );
+    }
+    writeFileSync(path.join(root, 'tmp', 'events.jsonl'), lines.join('\n') + '\n');
+    run(root, [
+      'pull',
+      'sample-size-test',
+      '--source',
+      'local',
+      '--after',
+      '2026-01-01T00:00:00.000Z',
+      '--before',
+      '2026-01-03T00:00:00.000Z',
+      '--json',
+    ]);
+    const analysis = run(root, ['analyze', 'sample-size-test', '--json']);
+    assert.equal(analysis.data.recommendation.action, 'keep_running');
+    assert.match(analysis.data.recommendation.reasoning, /Need at least 500 users per variant/);
   } finally {
     cleanup(root);
   }
@@ -395,7 +532,7 @@ test('preflight dry-run audits local JSONL without provider pull', () => {
       'tmp/events.jsonl',
       '--json',
     ]);
-    assert.equal(dryRun.data.audit.recommendation, 'ready_for_posthog_preflight');
+    assert.equal(dryRun.data.audit.recommendation, 'ready_for_provider_preflight');
     assert.equal(dryRun.data.audit.checks.find((check) => check.id === 'required_events').status, 'pass');
     assert.equal(dryRun.data.audit.checks.find((check) => check.id === 'synthetic_labels').status, 'pass');
   } finally {
@@ -436,7 +573,7 @@ test('preflight complete-local finishes prepared run from synthetic JSONL events
       '--json',
     ]);
     assert.equal(completed.data.run.status, 'completed');
-    assert.equal(completed.data.audit.recommendation, 'ready_for_posthog_preflight');
+    assert.equal(completed.data.audit.recommendation, 'ready_for_provider_preflight');
     assert.match(completed._next.command, /growth connector import stripe-projects --json/);
     assert.equal(completed.data.audit.checks.find((check) => check.id === 'reports_attached').status, 'pass');
     assert.equal(completed.data.audit.checks.find((check) => check.id === 'required_events').status, 'pass');
@@ -548,6 +685,23 @@ test('local connector pulls app-emitted JSONL events', () => {
     const doctor = run(root, ['doctor', 'my-test', '--json']);
     assert.equal(doctor.data.ok, true);
     assert.equal(doctor.data.checks.some((check) => check.name === 'connector_coverage' && check.status === 'pass'), true);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('connector validate for one source requires that source to cover active experiment events', () => {
+  const root = tempRoot();
+  try {
+    run(root, ['init', '--json']);
+    run(root, ['experiment', 'create', 'my-test', '--template', 'conversion-test', '--json']);
+    run(root, ['connector', 'add', 'local', '--events-file', 'tmp/events.jsonl', '--json']);
+    run(root, ['connector', 'add', 'posthog', '--json']);
+
+    const result = run(root, ['connector', 'validate', 'posthog', '--json'], { status: 1 });
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, 'connector_coverage_gap');
+    assert.deepEqual(result.error.details.missing.sort(), ['conversion_completed', 'experiment_viewed']);
   } finally {
     cleanup(root);
   }
@@ -672,6 +826,75 @@ test('preflight command is primary and returns structured audit and continuation
   }
 });
 
+test('preflight audit requires a configured provider connector for real-user readiness', () => {
+  const root = tempRoot();
+  try {
+    run(root, ['init', '--json']);
+    run(root, ['experiment', 'create', 'my-test', '--template', 'conversion-test', '--json']);
+    run(root, ['connector', 'add', 'local', '--events-file', 'tmp/events.jsonl', '--json']);
+    const preflight = run(root, ['preflight', 'prepare', 'my-test', '--agents', '2', '--json']);
+    const runFile = path.join(root, '.growth', 'runs', preflight.data.run.id, 'run.json');
+    const preparedRun = JSON.parse(readFileSync(runFile, 'utf8'));
+    preparedRun.event_window.after = '2026-01-01T00:00:00.000Z';
+    writeFileSync(runFile, JSON.stringify(preparedRun, null, 2) + '\n');
+
+    for (let i = 1; i <= 2; i++) {
+      const agent = preflight.data.run.agents[i - 1];
+      const report = path.join(root, `report-${i}.json`);
+      writeFileSync(
+        report,
+        JSON.stringify({
+          primary_goal_observed: true,
+          stopped_at_url: 'http://localhost:3000/done',
+          stop_reason: 'completed',
+          path_taken: ['opened app', 'converted'],
+          variant_observed: agent.variant_id,
+          primary_metric_events_observed: ['conversion_completed'],
+          guardrail_observed: false,
+          confusing_or_broken: [],
+          blockers: [],
+          internal_ui_visible: [],
+          missing_expected_events: [],
+          screenshot_or_trace_artifacts: [],
+        }) + '\n',
+      );
+      run(root, ['preflight', 'attach-report', preflight.data.run.id, '--agent', String(i), '--file', report, '--json']);
+    }
+
+    mkdirSync(path.join(root, 'tmp'), { recursive: true });
+    const baseTs = Date.parse('2026-01-01T00:00:01.000Z');
+    const eventLines = preflight.data.run.agents.flatMap((agent, index) => {
+      const ts = new Date(baseTs + index * 1000).toISOString();
+      return [
+        eventLine('my-test', `${agent.agent_id}-view`, 'experiment_viewed', ts, {
+          agentGenerated: true,
+          agentRunId: agent.agent_id,
+          userId: agent.agent_id,
+          variant: agent.variant_id,
+        }),
+        eventLine('my-test', `${agent.agent_id}-convert`, 'conversion_completed', ts, {
+          agentGenerated: true,
+          agentRunId: agent.agent_id,
+          userId: agent.agent_id,
+          variant: agent.variant_id,
+        }),
+      ];
+    });
+    writeFileSync(path.join(root, 'tmp', 'events.jsonl'), eventLines.join('\n') + '\n');
+    run(root, ['preflight', 'complete', preflight.data.run.id, '--json']);
+    run(root, ['preflight', 'pull', preflight.data.run.id, '--source', 'local', '--json']);
+
+    const runJson = JSON.parse(readFileSync(runFile, 'utf8'));
+    runJson.artifacts.pull_posthog = '.growth/runs/fake/pulls/posthog.json';
+    writeFileSync(runFile, JSON.stringify(runJson, null, 2) + '\n');
+
+    const audit = run(root, ['preflight', 'audit', preflight.data.run.id, '--json']);
+    assert.equal(audit.data.audit.recommendation, 'ready_for_provider_preflight');
+  } finally {
+    cleanup(root);
+  }
+});
+
 test('preflight audit attributes missing preflight events to coverage after local verification passes', () => {
   const root = tempRoot();
   try {
@@ -744,6 +967,21 @@ test('doctor warns when SPA navigation can drop synthetic query params', () => {
   }
 });
 
+test('validate exits nonzero when connector coverage is missing', () => {
+  const root = tempRoot();
+  try {
+    run(root, ['init', '--json']);
+    run(root, ['experiment', 'create', 'my-test', '--template', 'conversion-test', '--json']);
+    const result = run(root, ['validate', '--json'], { status: 1 });
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, 'validation_failed');
+    assert.equal(result.error.details.ok, false);
+    assert.equal(result.error.details.warnings.some((warning) => warning.code === 'CONNECTOR_COVERAGE_GAP'), true);
+  } finally {
+    cleanup(root);
+  }
+});
+
 test('env set can source values from process env without echoing the secret', () => {
   const root = tempRoot();
   try {
@@ -757,6 +995,22 @@ test('env set can source values from process env without echoing the secret', ()
     assert.equal(set.data.value, '[redacted]');
     assert.doesNotMatch(JSON.stringify(set), /phx_secret_value/);
     assert.match(readFileSync(path.join(root, '.env.local'), 'utf8'), /POSTHOG_PERSONAL_API_KEY="phx_secret_value"/);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('env set rejects literal values that would land in process args', () => {
+  const root = tempRoot();
+  try {
+    run(root, ['init', '--json']);
+    const result = run(
+      root,
+      ['env', 'set', '--key', 'POSTHOG_PERSONAL_API_KEY', '--value', 'phx_secret_value', '--json'],
+      { status: 1 },
+    );
+    assert.equal(result.error.code, 'unsafe_secret_argument');
+    assert.doesNotMatch(JSON.stringify(result), /phx_secret_value/);
   } finally {
     cleanup(root);
   }
@@ -945,21 +1199,29 @@ test('growth mcp exposes tool list', () => {
   assert.equal(result.status, 0);
   const lines = result.stdout.trim().split('\n').map((line) => JSON.parse(line));
   assert.equal(lines[0].result.serverInfo.name, 'growth');
-  assert.ok(lines[1].result.tools.some((tool) => tool.name === 'growth_preflight_audit'));
+  const auditTool = lines[1].result.tools.find((tool) => tool.name === 'growth_preflight_audit');
+  assert.ok(auditTool);
+  assert.equal(auditTool.inputSchema.properties.args, undefined);
+  assert.deepEqual(auditTool.inputSchema.required, ['run_id']);
+  assert.equal(auditTool.inputSchema.properties.run_id.type, 'string');
 });
 
-function eventLine(experimentId, eventId, event, timestamp) {
+function eventLine(experimentId, eventId, event, timestamp, options = {}) {
+  const variant = options.variant ?? 'control';
+  const userId = options.userId ?? `user-${experimentId}`;
+  const agentGenerated = options.agentGenerated ?? true;
+  const agentRunId = options.agentRunId === undefined ? `run-${experimentId}` : options.agentRunId;
   return JSON.stringify({
     event,
     properties: {
       event_id: eventId,
       experiment_id: experimentId,
-      variant_id: 'control',
-      user_id: `user-${experimentId}`,
-      session_id: `session-${experimentId}`,
+      variant_id: variant,
+      user_id: userId,
+      session_id: options.sessionId ?? `session-${userId}`,
       timestamp,
-      agent_generated: true,
-      agent_run_id: `run-${experimentId}`,
+      agent_generated: agentGenerated,
+      agent_run_id: agentRunId,
     },
   });
 }
