@@ -1,8 +1,6 @@
 import type { Command } from 'commander';
-import { execFile } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { promisify } from 'node:util';
 import { wrap, type RunCtx } from '../lib/runner.js';
 import { requireInitialized } from '../lib/gating.js';
 import { Store } from '../lib/store.js';
@@ -16,6 +14,7 @@ import {
 import {
   POSTHOG_DEFAULT_API_KEY_ENV,
   POSTHOG_DEFAULT_HOST,
+  POSTHOG_DEFAULT_HOST_ENV,
   POSTHOG_DEFAULT_PROJECT_ID,
   connectorApiKeyEnv,
   connectorRequiredEnv,
@@ -28,9 +27,7 @@ import {
 import { paths } from '../lib/paths.js';
 import { readShared, writeShared } from '../lib/state.js';
 import { GrowthError } from '../lib/envelope.js';
-import { parseEnvText, readEnvValue, readLocalEnv } from '../lib/env-files.js';
-
-const execFileAsync = promisify(execFile);
+import { parseEnvText, readEnvValue } from '../lib/env-files.js';
 
 export function registerConnectors(program: Command, ctx: RunCtx): void {
   const connector = program
@@ -69,12 +66,12 @@ export function registerConnectors(program: Command, ctx: RunCtx): void {
   connector
     .command('add <source>')
     .description('Create a connector config.')
-    .option('--project-id <id>', 'PostHog project id or env var name.', POSTHOG_DEFAULT_PROJECT_ID)
+    .option('--project-id <id>', 'Optional PostHog project id or env var name for read/pull APIs.')
     .option('--host <url>', 'PostHog host.', POSTHOG_DEFAULT_HOST)
     .option('--api-key-env <name>', 'Environment variable containing the API key.', POSTHOG_DEFAULT_API_KEY_ENV)
     .option('--events-file <path>', 'Local JSONL event stream for `local` connectors.', 'tmp/events.jsonl')
     .option('--from-stripe-projects', 'Import PostHog connector metadata from Stripe Projects context.', false)
-    .action(async (source: string, opts: { projectId: string; host: string; apiKeyEnv: string; eventsFile: string; fromStripeProjects?: boolean }) => {
+    .action(async (source: string, opts: { projectId?: string; host: string; apiKeyEnv: string; eventsFile: string; fromStripeProjects?: boolean }) => {
       await wrap('growth connector add', ctx, async () => {
         await requireInitialized(ctx.getRoot());
         if (opts.fromStripeProjects) {
@@ -213,7 +210,9 @@ export function registerConnectors(program: Command, ctx: RunCtx): void {
         const apiKeyEnv = connectorApiKeyEnv(c);
         const projectId = c.posthog?.project_id;
         const projectIdPresent =
-          isEnvReference(projectId)
+          projectId === undefined
+            ? true
+            : isEnvReference(projectId)
             ? !!(await readEnvValue(ctx.getRoot(), projectId))
             : projectId !== undefined;
         const apiKeyPresent = apiKeyEnv ? !!(await readEnvValue(ctx.getRoot(), apiKeyEnv)) : true;
@@ -222,16 +221,17 @@ export function registerConnectors(program: Command, ctx: RunCtx): void {
             source: c.source,
             kind: c.kind,
             host: c.posthog?.host,
+            project_id_required: projectId !== undefined,
             project_id_present: projectIdPresent,
             api_key_env: apiKeyEnv,
             api_key_present: apiKeyPresent,
             required_scopes: connectorRequiredScopes(c.kind),
           },
-          humanText: `${source} auth: project_id=${projectIdPresent ? 'present' : 'missing'} api_key=${apiKeyPresent ? 'present' : 'missing'}`,
+          humanText: `${source} auth: project_id=${projectId === undefined ? 'not required' : projectIdPresent ? 'present' : 'missing'} api_key=${apiKeyPresent ? 'present' : 'missing'}`,
           nextSteps:
             apiKeyPresent && projectIdPresent
               ? [`growth connector validate ${source} --json`]
-              : [`Set ${apiKeyEnv ?? 'the connector API key env var'} and project id, then rerun this command.`],
+              : [`Set ${apiKeyEnv ?? 'the connector API key env var'}${projectId === undefined ? '' : ' and project id'}, then rerun this command.`],
         };
       });
     });
@@ -285,7 +285,7 @@ async function importStripeProjectsPostHog(ctx: RunCtx, source: string) {
 
 async function discoverStripeProjectsPostHog(root: string): Promise<{
   host: string;
-  projectId: string | number;
+  projectId?: string | number;
   apiKeyEnv: string;
   source_file: string;
 }> {
@@ -314,17 +314,12 @@ async function discoverStripeProjectsPostHog(root: string): Promise<{
     });
   }
 
-  const partials: Array<{ host: string; projectId?: string | number; apiKeyEnv: string; source_file: string }> = [];
   const matches = found
     .map((candidate) => ({ ...candidate, parsed: safeJson(candidate.text) }))
     .map((candidate) => {
       const envCandidate = findPostHogEnvCandidate(candidate.text, path.relative(root, candidate.file));
       if (envCandidate) {
-        if (envCandidate.projectId !== undefined) {
-          return envCandidate as { host: string; projectId: string | number; apiKeyEnv: string; source_file: string };
-        }
-        partials.push(envCandidate);
-        return null;
+        return envCandidate;
       }
       const text = candidate.text;
       const projectId =
@@ -336,7 +331,7 @@ async function discoverStripeProjectsPostHog(root: string): Promise<{
       const host =
         findUrl(candidate.parsed, 'posthog') ??
         (text.includes('eu.posthog.com') ? 'https://eu.posthog.com' : POSTHOG_DEFAULT_HOST);
-      return projectId && apiKeyEnv
+      return apiKeyEnv
         ? {
             host,
             projectId,
@@ -345,26 +340,12 @@ async function discoverStripeProjectsPostHog(root: string): Promise<{
           }
         : null;
     })
-    .filter((candidate): candidate is { host: string; projectId: string | number; apiKeyEnv: string; source_file: string } => !!candidate);
-
-  if (matches.length === 0 && partials.length > 0) {
-    const projectId = await discoverPostHogProjectIdFromStripeOpen(root);
-    if (projectId !== undefined) {
-      const preferred = partials[0];
-      matches.push({
-        ...preferred,
-        projectId,
-        source_file: `${preferred.source_file} + stripe projects open posthog --json`,
-      });
-    }
-  }
+    .filter((candidate): candidate is { host: string; projectId?: string | number; apiKeyEnv: string; source_file: string } => !!candidate);
 
   if (matches.length === 0) {
-    throw new GrowthError('posthog_context_not_found', 'Stripe Projects metadata did not include PostHog env names.', {
+    throw new GrowthError('posthog_context_not_found', 'No PostHog analytics env names were found.', {
       checked: found.map((candidate) => path.relative(root, candidate.file)),
-      hint: partials.length
-        ? 'PostHog env names were found, but no PostHog project id was available. Run `stripe projects open posthog --json` or set POSTHOG_ANALYTICS_PROJECT_ID.'
-        : undefined,
+      hint: `Set ${POSTHOG_DEFAULT_API_KEY_ENV} and ${POSTHOG_DEFAULT_HOST_ENV}, or add the PostHog connector explicitly.`,
     });
   }
   const unique = new Map(matches.map((m) => [`${m.host}|${m.projectId}|${m.apiKeyEnv}`, m]));
@@ -382,6 +363,18 @@ function findPostHogEnvCandidate(
   source_file: string,
 ): { host: string; projectId?: string | number; apiKeyEnv: string; source_file: string } | null {
   const env = parseEnvText(text);
+  const analyticsKeyCandidates = ['POSTHOG_ANALYTICS_API_KEY', 'POST_HOG_ANALYTICS_API_KEY'];
+  const analyticsHostCandidates = ['POSTHOG_ANALYTICS_HOST', 'POST_HOG_ANALYTICS_HOST', 'POSTHOG_HOST'];
+  const analyticsApiKeyEnv = analyticsKeyCandidates.find((key) => key in env);
+  if (analyticsApiKeyEnv) {
+    const hostKey = analyticsHostCandidates.find((key) => key in env);
+    return {
+      host: hostKey ? env[hostKey] : POSTHOG_DEFAULT_HOST,
+      apiKeyEnv: analyticsApiKeyEnv,
+      source_file,
+    };
+  }
+
   const bases = ['POSTHOG_ANALYTICS', 'POSTHOG', 'POSTHOG_PLAN'];
   for (const base of bases) {
     const apiKeyEnv = `${base}_PERSONAL_API_KEY`;
@@ -403,56 +396,6 @@ function shouldPreserveMappings(mappings: ConnectorConfig['mappings'] | undefine
   return Object.values(mappings).some(
     (mapping) => mapping.framework_event || mapping.payload_paths || mapping.payload_static,
   );
-}
-
-async function discoverPostHogProjectIdFromStripeOpen(root: string): Promise<number | undefined> {
-  try {
-    const { stdout } = await execFileAsync('stripe', ['projects', 'open', 'posthog', '--json'], {
-      cwd: root,
-      timeout: 15_000,
-      maxBuffer: 1024 * 1024,
-    });
-    const parsed = safeJson(stdout);
-    const url = findString(parsed, ['url']);
-    if (!url) return undefined;
-    const dashboardUrl = new URL(url);
-    const env = await readLocalEnv(root);
-    const projectTokens = new Set(
-      Object.entries(env)
-        .filter(([key, value]) => /^POSTHOG(?:_[A-Z]+)*_API_KEY$/.test(key) && !key.includes('PERSONAL') && value)
-        .map(([, value]) => value),
-    );
-    const projectIdByToken = await discoverPostHogProjectIdByToken(dashboardUrl, projectTokens);
-    if (projectIdByToken !== undefined) return projectIdByToken;
-
-    const teamId = dashboardUrl.searchParams.get('team_id');
-    return teamId && /^\d+$/.test(teamId) ? Number(teamId) : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-async function discoverPostHogProjectIdByToken(
-  dashboardUrl: URL,
-  projectTokens: Set<string>,
-): Promise<number | undefined> {
-  if (projectTokens.size === 0) return undefined;
-  const login = await fetch(dashboardUrl, { redirect: 'manual' });
-  const getSetCookie = (login.headers as Headers & { getSetCookie?: () => string[] }).getSetCookie;
-  const cookies = getSetCookie ? getSetCookie.call(login.headers) : [];
-  if (cookies.length === 0) return undefined;
-
-  const projects = await fetch(new URL('/api/projects/', dashboardUrl.origin), {
-    headers: { Cookie: cookies.map((cookie) => cookie.split(';')[0]).join('; ') },
-  });
-  if (!projects.ok) return undefined;
-  const body = (await projects.json()) as { results?: Array<{ id?: unknown; api_token?: unknown }> };
-  for (const project of body.results ?? []) {
-    if (typeof project.id === 'number' && typeof project.api_token === 'string' && projectTokens.has(project.api_token)) {
-      return project.id;
-    }
-  }
-  return undefined;
 }
 
 function safeJson(text: string): unknown {

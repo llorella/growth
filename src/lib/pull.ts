@@ -424,11 +424,17 @@ async function fetchPostHog(
   if (!apiKey) {
     throw new GrowthError(
       'missing_api_key',
-      `Set ${apiKeyEnv} to a PostHog personal API key with query:read scope.`,
+      `Set ${apiKeyEnv} to the PostHog API key configured for this app.`,
     );
   }
   const host = connector.posthog.host ?? POSTHOG_DEFAULT_HOST;
   const configuredProjectId = connector.posthog.project_id;
+  if (configuredProjectId === undefined) {
+    throw new GrowthError(
+      'missing_project_id',
+      'PostHog event pulls require a project id. The analytics API key and host are enough to configure app telemetry, but not enough for this pull API.',
+    );
+  }
   const projectId =
     typeof configuredProjectId === 'string' && (await readEnvValue(root, configuredProjectId))
       ? await readEnvValue(root, configuredProjectId)

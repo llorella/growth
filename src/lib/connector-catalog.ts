@@ -13,9 +13,10 @@ export const CONNECTOR_KINDS = [
 ] as const;
 
 export const POSTHOG_DEFAULT_HOST = 'https://us.posthog.com';
+export const POSTHOG_DEFAULT_HOST_ENV = 'POSTHOG_ANALYTICS_HOST';
 export const POSTHOG_DEFAULT_PROJECT_ID = 'POSTHOG_PROJECT_ID';
-export const POSTHOG_DEFAULT_API_KEY_ENV = 'POSTHOG_PERSONAL_API_KEY';
-export const POSTHOG_REQUIRED_SCOPES = ['query:read', 'project:read'];
+export const POSTHOG_DEFAULT_API_KEY_ENV = 'POSTHOG_ANALYTICS_API_KEY';
+export const POSTHOG_REQUIRED_SCOPES: string[] = [];
 
 export function isConnectorKind(kind: unknown): kind is ConnectorConfig['kind'] {
   return typeof kind === 'string' && CONNECTOR_KINDS.includes(kind as ConnectorConfig['kind']);
@@ -54,7 +55,7 @@ export function isEnvReference(value: unknown): value is string {
 }
 
 export function defaultPostHogConnector(
-  projectId: string | number = POSTHOG_DEFAULT_PROJECT_ID,
+  projectId?: string | number,
   opts: {
     host?: string;
     apiKeyEnv?: string;
@@ -73,8 +74,8 @@ export function defaultPostHogConnector(
     idempotency_key_path: 'uuid',
     posthog: {
       host: opts.host ?? POSTHOG_DEFAULT_HOST,
-      project_id: projectId,
       api_key_env: opts.apiKeyEnv ?? POSTHOG_DEFAULT_API_KEY_ENV,
+      ...(projectId !== undefined ? { project_id: projectId } : {}),
     },
     mappings: opts.mappings ?? {},
   };

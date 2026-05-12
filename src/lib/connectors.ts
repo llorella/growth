@@ -39,7 +39,7 @@ export interface ConnectorConfig {
   /** Posthog-specific config block. Other kinds get their own block. */
   posthog?: {
     host?: string;
-    project_id: string | number;
+    project_id?: string | number;
     api_key_env?: string;
   };
   /** Native/local app event stream config. events_file is JSONL relative to the repo root unless absolute. */
@@ -103,11 +103,15 @@ export function validateConnectorConfig(connector: ConnectorConfig): ConnectorVa
     if (!isRecord(connector.posthog)) {
       issues.push({ source, message: 'missing posthog config block', path: 'posthog' });
     } else {
-      if (typeof connector.posthog.project_id !== 'string' && typeof connector.posthog.project_id !== 'number') {
-        issues.push({ source, message: 'missing posthog.project_id', path: 'posthog.project_id' });
-      }
       if (connector.posthog.host !== undefined && typeof connector.posthog.host !== 'string') {
         issues.push({ source, message: 'posthog.host must be a string', path: 'posthog.host' });
+      }
+      if (
+        connector.posthog.project_id !== undefined &&
+        typeof connector.posthog.project_id !== 'string' &&
+        typeof connector.posthog.project_id !== 'number'
+      ) {
+        issues.push({ source, message: 'posthog.project_id must be a string or number', path: 'posthog.project_id' });
       }
       if (connector.posthog.api_key_env !== undefined && typeof connector.posthog.api_key_env !== 'string') {
         issues.push({ source, message: 'posthog.api_key_env must be a string', path: 'posthog.api_key_env' });

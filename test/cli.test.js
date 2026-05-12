@@ -462,6 +462,40 @@ test('preflight plan prefers discoverable PostHog before local JSONL', () => {
   }
 });
 
+test('preflight plan uses provider-backed connector when PostHog is ready', () => {
+  const root = tempRoot();
+  try {
+    run(root, ['init', '--json']);
+    const spec = genericSpec({
+      id: 'provider-plan',
+      event: 'activation_completed',
+      denominatorEvent: 'experiment_viewed',
+    });
+    spec.targeting = { domains: ['/onboarding'] };
+    const specFile = path.join(root, 'spec.json');
+    writeFileSync(specFile, JSON.stringify(spec));
+    run(root, ['experiment', 'create', 'provider-plan', '--from-file', specFile, '--json']);
+    writeFileSync(
+      path.join(root, '.env'),
+      [
+        'POSTHOG_ANALYTICS_API_KEY=phc_test',
+        'POSTHOG_ANALYTICS_HOST=https://us.posthog.com',
+        '',
+      ].join('\n'),
+    );
+    run(root, ['connector', 'import', 'stripe-projects', '--json']);
+
+    const plan = run(root, ['preflight', 'plan', 'provider-plan', '--json']);
+    assert.equal(plan.data.plan.evidence.preferred_evidence, 'posthog');
+    assert.equal(plan.data.plan.evidence.readiness_ceiling, 'provider_preflight_passed');
+    assert.match(plan.data.plan.next_command, /growth preflight prepare provider-plan/);
+    assert.match(plan.data.plan.next_command, /--app-url http:\/\/localhost:3000\/onboarding/);
+    assert.equal(plan.data.plan.readiness.ceiling, 'provider_preflight_passed');
+  } finally {
+    cleanup(root);
+  }
+});
+
 test('preflight packets use explicit experiment scenarios when provided', () => {
   const root = tempRoot();
   try {
@@ -1055,13 +1089,13 @@ test('env set can source values from process env without echoing the secret', ()
     run(root, ['init', '--json']);
     const set = run(
       root,
-      ['env', 'set', '--key', 'POSTHOG_PERSONAL_API_KEY', '--from-env', 'SOURCE_POSTHOG_KEY', '--json'],
+      ['env', 'set', '--key', 'POSTHOG_ANALYTICS_API_KEY', '--from-env', 'SOURCE_POSTHOG_KEY', '--json'],
       { env: { SOURCE_POSTHOG_KEY: 'phx_secret_value' } },
     );
     assert.equal(set.data.source.from_env, 'SOURCE_POSTHOG_KEY');
     assert.equal(set.data.value, '[redacted]');
     assert.doesNotMatch(JSON.stringify(set), /phx_secret_value/);
-    assert.match(readFileSync(path.join(root, '.env.local'), 'utf8'), /POSTHOG_PERSONAL_API_KEY="phx_secret_value"/);
+    assert.match(readFileSync(path.join(root, '.env.local'), 'utf8'), /POSTHOG_ANALYTICS_API_KEY="phx_secret_value"/);
   } finally {
     cleanup(root);
   }
@@ -1073,7 +1107,7 @@ test('env set rejects literal values that would land in process args', () => {
     run(root, ['init', '--json']);
     const result = run(
       root,
-      ['env', 'set', '--key', 'POSTHOG_PERSONAL_API_KEY', '--value', 'phx_secret_value', '--json'],
+      ['env', 'set', '--key', 'POSTHOG_ANALYTICS_API_KEY', '--value', 'phx_secret_value', '--json'],
       { status: 1 },
     );
     assert.equal(result.error.code, 'unsafe_secret_argument');
@@ -1220,30 +1254,47 @@ test('stripe projects import recognizes prefixed posthog env output', () => {
       [
         'POSTHOG_ANALYTICS_API_KEY=phc_test',
         'POSTHOG_ANALYTICS_HOST=https://us.posthog.com',
-        'POSTHOG_ANALYTICS_PERSONAL_API_KEY=phx_test',
-        'POSTHOG_ANALYTICS_PROJECT_ID=12345',
         '',
       ].join('\n'),
     );
 
     const imported = run(root, ['connector', 'import', 'stripe-projects', '--json']);
     assert.equal(imported.data.connector.posthog.host, 'https://us.posthog.com');
-    assert.equal(imported.data.connector.posthog.project_id, 'POSTHOG_ANALYTICS_PROJECT_ID');
-    assert.equal(imported.data.connector.posthog.api_key_env, 'POSTHOG_ANALYTICS_PERSONAL_API_KEY');
+    assert.equal(imported.data.connector.posthog.project_id, undefined);
+    assert.equal(imported.data.connector.posthog.api_key_env, 'POSTHOG_ANALYTICS_API_KEY');
     assert.equal(
       imported.data.connector.mappings.activation_completed.payload_paths.agent_generated,
       'properties.agent_generated',
     );
 
     const auth = run(root, ['connector', 'auth', 'check', 'posthog', '--json']);
+    assert.equal(auth.data.project_id_required, false);
     assert.equal(auth.data.project_id_present, true);
     assert.equal(auth.data.api_key_present, true);
 
     const state = JSON.parse(readFileSync(path.join(root, '.growth', 'state.json'), 'utf8'));
-    assert.deepEqual(state.connectors.posthog.required_env, [
-      'POSTHOG_ANALYTICS_PERSONAL_API_KEY',
-      'POSTHOG_ANALYTICS_PROJECT_ID',
-    ]);
+    assert.deepEqual(state.connectors.posthog.required_env, ['POSTHOG_ANALYTICS_API_KEY']);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('stripe projects import accepts post hog analytics host alias', () => {
+  const root = tempRoot();
+  try {
+    run(root, ['init', '--json']);
+    writeFileSync(
+      path.join(root, '.env'),
+      [
+        'POSTHOG_ANALYTICS_API_KEY=phc_test',
+        'POST_HOG_ANALYTICS_HOST=https://eu.posthog.com',
+        '',
+      ].join('\n'),
+    );
+
+    const imported = run(root, ['connector', 'import', 'stripe-projects', '--json']);
+    assert.equal(imported.data.connector.posthog.host, 'https://eu.posthog.com');
+    assert.equal(imported.data.connector.posthog.api_key_env, 'POSTHOG_ANALYTICS_API_KEY');
   } finally {
     cleanup(root);
   }

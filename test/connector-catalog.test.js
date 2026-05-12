@@ -18,7 +18,7 @@ test('connector catalog owns PostHog auth defaults and synthetic mapping paths',
 
   assert.equal(connector.variant_id_path, 'properties.variant_id');
   assert.deepEqual(connectorRequiredEnv(connector), ['CUSTOM_POSTHOG_KEY', 'CUSTOM_POSTHOG_PROJECT']);
-  assert.deepEqual(connectorRequiredScopes(connector.kind), ['query:read', 'project:read']);
+  assert.deepEqual(connectorRequiredScopes(connector.kind), []);
   assert.equal(mappings.activation_completed.payload_paths.agent_generated, 'properties.agent_generated');
   assert.equal(mappings.activation_completed.payload_paths.agent_run_id, 'properties.agent_run_id');
   assert.equal(mappings.activation_completed.payload_paths.session_id, 'properties.session_id');

@@ -226,7 +226,6 @@ export const connectorSchema = {
     idempotency_key_path: { type: 'string' },
     posthog: {
       type: 'object',
-      required: ['project_id'],
       properties: {
         host: { type: 'string' },
         project_id: { type: ['string', 'number'] },
