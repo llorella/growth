@@ -10,6 +10,7 @@ import { resolveAppUrl } from '../lib/app-url.js';
 import { listConnectors, assertCoverage, type ConnectorConfig } from '../lib/connectors.js';
 import { paths } from '../lib/paths.js';
 import type { Experiment } from '../domain/types.js';
+import { resolvePreflightPlan, type ReadinessTier } from '../preflight/plan.js';
 import {
   SYNTHETIC_TRAFFIC_FIELDS,
   SYNTHETIC_TRAFFIC_QUERY_PARAMS,
@@ -203,6 +204,23 @@ export function registerInstrumentation(program: Command, ctx: RunCtx): void {
           connectorCoverageOk &&
           (endpointCheck ? endpointCheck.ok : true) &&
           (actualEventCheck ? actualEventCheck.ok : true);
+        const readiness = readinessModel({
+          connectorCoverageOk,
+          endpointOk: endpointCheck?.ok,
+          actualEventOk: actualEventCheck?.ok,
+          actualEventProvided: !!actualEventCheck,
+        });
+        const plan = await resolvePreflightPlan({
+          root,
+          experiment: exp,
+          connectors,
+          framework,
+          appUrl,
+        });
+        const shouldPlanNext =
+          !endpointCheck &&
+          !actualEventCheck &&
+          (!connectorCoverageOk || ok);
         return {
           data: {
             experiment_id: exp.id,
@@ -218,6 +236,14 @@ export function registerInstrumentation(program: Command, ctx: RunCtx): void {
             instrumentation_run: instrumentationRun,
             static_contract_ok: connectorCoverageOk,
             actual_events_verified: actualEventCheck ? actualEventCheck.ok : false,
+            readiness,
+            preflight_plan: {
+              preferred_evidence: plan.evidence.preferred_evidence,
+              readiness_ceiling: plan.evidence.readiness_ceiling,
+              blocked: plan.readiness.blocked,
+              packet_app_url: plan.packet_app_url,
+              next_command: plan.next_command,
+            },
             ready_for_preflight: ok,
             ok,
           },
@@ -228,18 +254,17 @@ export function registerInstrumentation(program: Command, ctx: RunCtx): void {
               : `Instrumentation contract for ${exp.id} is statically verifiable.`
             : `Instrumentation contract for ${exp.id} has warnings.`,
           nextSteps:
-            !connectorCoverageOk ||
             (endpointCheck && !endpointCheck.ok) ||
             (actualEventCheck && !actualEventCheck.ok)
               ? [
                   'Update connector mappings or app-emitted event payloads as needed.',
                   `Run growth instrumentation verify ${exp.id} --json again.`,
                 ]
-              : [`Run growth preflight prepare ${exp.id} --agents 4 --browser --app-url ${appUrl} --json`],
-          next: ok
+              : [`Run growth preflight plan ${exp.id} --json`],
+          next: shouldPlanNext
             ? {
-                command: `growth preflight prepare ${exp.id} --agents 4 --browser --app-url ${appUrl} --json`,
-                until: 'browser-agent packets are prepared for pre-launch validation',
+                command: `growth preflight plan ${exp.id} --json`,
+                until: 'Growth chooses evidence source, readiness ceiling, target route, and next command',
               }
             : {
                 command: `growth instrumentation verify ${exp.id} --json`,
@@ -248,6 +273,41 @@ export function registerInstrumentation(program: Command, ctx: RunCtx): void {
         };
       });
     });
+}
+
+function readinessModel(opts: {
+  connectorCoverageOk: boolean;
+  endpointOk?: boolean;
+  actualEventOk?: boolean;
+  actualEventProvided: boolean;
+}): {
+  tier: ReadinessTier;
+  static_ready: boolean;
+  local_synthetic_ready: boolean;
+  provider_preflight_passed: boolean;
+  real_user_analysis_ready: boolean;
+  notes: string[];
+} {
+  const notes: string[] = [];
+  if (!opts.connectorCoverageOk) {
+    notes.push('Connector coverage is unresolved; run growth preflight plan for provider/local evidence setup.');
+  }
+  if (opts.actualEventProvided && !opts.actualEventOk) {
+    notes.push('Actual emitted event evidence is incomplete.');
+  }
+  if (opts.endpointOk === false) {
+    notes.push('Endpoint sample verification failed.');
+  }
+  const staticReady = opts.connectorCoverageOk && opts.endpointOk !== false;
+  const localSyntheticReady = staticReady && opts.actualEventOk === true;
+  return {
+    tier: localSyntheticReady ? 'local_synthetic_ready' : staticReady ? 'static_ready' : 'blocked',
+    static_ready: staticReady,
+    local_synthetic_ready: localSyntheticReady,
+    provider_preflight_passed: false,
+    real_user_analysis_ready: false,
+    notes,
+  };
 }
 
 function buildContract(exp: Experiment) {

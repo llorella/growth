@@ -78,6 +78,24 @@ const tools: GrowthTool[] = [
     ],
   ),
   tool(
+    'growth_preflight_plan',
+    ['preflight', 'plan'],
+    'Resolve evidence source, target route, readiness ceiling, and next preflight command.',
+    schema(
+      {
+        experiment_id: { type: 'string' },
+        app_url: { type: 'string' },
+        base_url: { type: 'string' },
+      },
+      ['experiment_id'],
+    ),
+    (input) => [
+      requireString(input, 'experiment_id'),
+      ...optionalFlag(input, 'app_url', '--app-url'),
+      ...optionalFlag(input, 'base_url', '--base-url'),
+    ],
+  ),
+  tool(
     'growth_preflight_prepare',
     ['preflight', 'prepare'],
     'Prepare browser-agent preflight packets for an experiment.',

@@ -29,6 +29,9 @@ const CONVENTIONS = [
   'Use variant_id as the canonical emitted event property; the variant query param only forces a synthetic branch.',
   'Every synthetic event must have payload agent_generated=true and a non-empty agent_run_id.',
   'Prepared preflight runs use a half-open event window: after <= timestamp < before.',
+  '`growth preflight plan <id> --json` chooses the evidence source, target route, readiness ceiling, and next command.',
+  '`static_ready` means specs, mappings, and static checks are plausible; it is not emitted-event proof.',
+  '`local_synthetic_ready` means local app-emitted synthetic events passed audit; it does not prove provider ingestion.',
   '`ready_for_provider_preflight` means local synthetic evidence passed; it is not provider-backed or real-user evidence.',
   '`provider_preflight_passed` means synthetic traffic was pulled through a provider; it is still not a ship decision.',
   'Never treat agent-generated traffic as real-user evidence.',
@@ -71,11 +74,9 @@ export function registerLlmContext(program: Command, ctx: RunCtx): void {
               'growth experiment create <id> --from-file <spec.json> --json',
               'growth instrumentation plan <id> --json',
               'growth instrumentation verify <id> --json',
-              'growth instrumentation verify <id> --events-file tmp/events.jsonl --json',
-              'growth preflight dry-run <id> --events-file tmp/events.jsonl --json',
-              `growth preflight prepare <id> --agents 4 --browser --app-url ${appUrl} --json`,
-              'growth preflight complete-local <run_id> --events-file tmp/events.jsonl --json',
-              'growth preflight pull <run_id> --source local --json',
+              'growth preflight plan <id> --json',
+              'growth preflight prepare <id> --agents 4 --browser --app-url <packet_app_url> --json',
+              'growth preflight pull <run_id> --source <provider> --json',
               'growth preflight audit <run_id> --json',
               'growth pull <id> --source posthog --after <iso> --json',
               'growth analyze <id> --segment real-users --json',
@@ -105,8 +106,8 @@ export function registerLlmContext(program: Command, ctx: RunCtx): void {
           next:
             experiments.length > 0
               ? {
-                  command: `growth instrumentation verify ${experiments[0].id} --json`,
-                  until: 'active experiment instrumentation is verified before preflight',
+                  command: `growth preflight plan ${experiments[0].id} --json`,
+                  until: 'Growth chooses evidence source, target route, readiness ceiling, and next command',
                 }
               : {
                   command: 'growth schema experiment --json',

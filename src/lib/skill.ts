@@ -31,9 +31,13 @@ Rules:
 - Use \`growth schema experiment --json\` before creating experiment configs.
 - Use \`growth instrumentation plan <id> --json\` before editing app code.
 - Use \`growth instrumentation verify <id> --json\` after editing app code.
+- Use \`growth preflight plan <id> --json\` after instrumentation verification.
+- Do not choose evidence source, connector, app URL, or readiness semantics yourself unless Growth asks.
 - Prefer the growth MCP server when available; otherwise use \`growth ... --json\`.
-- Use \`growth preflight prepare\`, not ad hoc browser-agent prompts.
+- Use the next command Growth returns; do not jump directly to local JSONL unless the plan selects it.
 - Use \`growth pull\` and \`growth analyze\`; do not rely on raw analytics screenshots.
+- Treat \`static_ready\` as static readiness only.
+- Treat \`local_synthetic_ready\` as local synthetic readiness only.
 - Treat \`ready_for_provider_preflight\` as local synthetic readiness only.
 - Treat \`provider_preflight_passed\` as provider-backed synthetic readiness only.
 - Never treat agent-generated traffic as real-user evidence.
@@ -57,9 +61,12 @@ This is a reference shape, not a required file layout. Prefer the host app's exi
 - Only reset synthetic per-event dedupe when \`agent_run_id\` changes. Do not clear dedupe just because \`agent_generated=true\` is still in the URL.
 - Emit each required event once per user/session milestone unless the event is intentionally repeatable.
 
-## Local Connector Event Envelope
+## Event Envelope
 
-The built-in local connector expects PostHog-style JSONL rows:
+Growth will choose the evidence source in \`growth preflight plan <id> --json\`.
+For PostHog apps, use the app's existing PostHog conventions. If Growth
+selects a local JSONL fast loop, the built-in local connector expects
+PostHog-style JSONL rows:
 
 \`\`\`json
 {
@@ -78,16 +85,16 @@ The built-in local connector expects PostHog-style JSONL rows:
 }
 \`\`\`
 
-Append one JSON object per line to the connector's \`local.events_file\`, commonly \`tmp/events.jsonl\`.
+Append one JSON object per line only when the preflight plan or connector config
+selects local JSONL.
 
 ## Verification
 
 After implementing, run:
 
 \`\`\`bash
-growth connector add local --events-file tmp/events.jsonl --json
-growth instrumentation verify <experiment_id> --events-file tmp/events.jsonl --json
-growth connector validate local --json
+growth instrumentation verify <experiment_id> --json
+growth preflight plan <experiment_id> --json
 \`\`\`
 `;
 
@@ -115,14 +122,15 @@ The query param is named \`variant\` because it forces the synthetic packet bran
 
 ## Verification Loop
 
-Use local JSONL for the fast loop:
+After implementing, run:
 
 \`\`\`bash
-growth instrumentation verify <experiment_id> --events-file tmp/events.jsonl --json
-growth preflight dry-run <experiment_id> --events-file tmp/events.jsonl --json
+growth instrumentation verify <experiment_id> --json
+growth preflight plan <experiment_id> --json
 \`\`\`
 
-Then run a real provider-backed preflight before launch.
+Use local JSONL only when \`growth preflight plan\` selects it or explicitly names
+it as a fallback.
 `;
 
 const WORKFLOWS: Record<string, string> = {
@@ -143,17 +151,18 @@ const WORKFLOWS: Record<string, string> = {
 4. Inspect existing app structure yourself; framework hints and candidate files are advisory.
 5. If client-side navigation is present, persist preflight query params to sessionStorage before navigation.
 6. Run \`growth instrumentation verify <id> --json\`.
-7. If local app events exist, run \`growth connector add local --events-file tmp/events.jsonl --json\`, then \`growth instrumentation verify <id> --events-file tmp/events.jsonl --json\`.
-8. Use \`growth preflight dry-run <id> --events-file tmp/events.jsonl --json\` for a fast local audit before provider preflight.
+7. Run \`growth preflight plan <id> --json\`.
+8. Follow the next command returned by Growth; do not choose provider vs local evidence yourself.
 `,
   'run-preflight.md': `# Run Preflight
 
-1. Run \`growth preflight prepare <id> --agents 4 --browser --app-url <dev-server-url> --json\`. If omitted, growth falls back to local state or a heuristic app URL.
-2. Note \`event_window.after\`; events before that timestamp are intentionally excluded from \`growth preflight pull\`.
-3. Launch each generated packet with the available browser runner.
-4. Attach reports with \`growth preflight attach-report <run_id> --agent <n> --file <report.json> --json\`.
-5. Complete with \`growth preflight complete <run_id> --json\`.
-6. Pull and audit with \`growth preflight pull <run_id> --source <source> --json\` and \`growth preflight audit <run_id> --json\`.
+1. Run \`growth preflight plan <id> --json\`.
+2. Follow the returned \`_next.command\`.
+3. If Growth prepares packets, note \`event_window.after\`; events before that timestamp are intentionally excluded from \`growth preflight pull\`.
+4. Launch each generated packet with the available browser runner.
+5. Attach reports with \`growth preflight attach-report <run_id> --agent <n> --file <report.json> --json\`.
+6. Complete with \`growth preflight complete <run_id> --json\`.
+7. Pull and audit using the source selected by Growth.
 `,
   'pull-and-analyze.md': `# Pull And Analyze
 

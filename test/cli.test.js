@@ -436,6 +436,32 @@ test('preflight prepare balances synthetic variant packets by default', () => {
   }
 });
 
+test('preflight plan prefers discoverable PostHog before local JSONL', () => {
+  const root = tempRoot();
+  try {
+    run(root, ['init', '--json']);
+    writeFileSync(path.join(root, 'package.json'), JSON.stringify({ dependencies: { 'posthog-js': '^1.0.0' } }));
+    const spec = genericSpec({
+      id: 'onboarding-plan',
+      event: 'activation_completed',
+      denominatorEvent: 'experiment_viewed',
+    });
+    spec.targeting = { domains: ['/onboarding'] };
+    const specFile = path.join(root, 'spec.json');
+    writeFileSync(specFile, JSON.stringify(spec));
+    run(root, ['experiment', 'create', 'onboarding-plan', '--from-file', specFile, '--json']);
+
+    const plan = run(root, ['preflight', 'plan', 'onboarding-plan', '--json']);
+    assert.equal(plan.data.plan.evidence.preferred_evidence, 'posthog');
+    assert.equal(plan.data.plan.evidence.readiness_ceiling, 'blocked');
+    assert.equal(plan.data.plan.next_command, 'growth connector import stripe-projects --json');
+    assert.equal(plan.data.plan.target_route, '/onboarding');
+    assert.equal(plan.data.plan.packet_app_url, 'http://localhost:3000/onboarding');
+  } finally {
+    cleanup(root);
+  }
+});
+
 test('preflight packets use explicit experiment scenarios when provided', () => {
   const root = tempRoot();
   try {

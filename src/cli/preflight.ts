@@ -37,6 +37,7 @@ import {
   synthesizeReportsFromEvents,
 } from '../preflight/reports.js';
 import type { PreflightAudit, PreflightReportSummary } from '../preflight/types.js';
+import { resolvePreflightPlan } from '../preflight/plan.js';
 
 const ajv = new (Ajv2020 as unknown as { new (opts: object): Ajv2020 })({
   allErrors: true,
@@ -48,6 +49,59 @@ const validatePreflightReport = ajv.compile(preflightReportSchema);
 export function registerPreflight(program: Command, ctx: RunCtx): void {
   const preflight = program.command('preflight').description('Prepare, pull, and audit synthetic browser-agent preflights.');
   const commandPrefix = 'growth preflight';
+
+  preflight
+    .command('plan <experiment_id>')
+    .description('Resolve evidence source, target route, readiness ceiling, and next preflight command.')
+    .option('--app-url <url>', 'Application URL agents should open.')
+    .option('--base-url <url>', 'Alias for --app-url.')
+    .action(async (experimentId: string, opts: { appUrl?: string; baseUrl?: string }) => {
+      await wrap(`${commandPrefix} plan`, ctx, async () => {
+        await requireInitialized(ctx.getRoot());
+        if (opts.appUrl && opts.baseUrl && opts.appUrl !== opts.baseUrl) {
+          throw new GrowthError('conflicting_app_urls', '--app-url and --base-url were both provided with different values.');
+        }
+        const root = ctx.getRoot();
+        const store = new Store(root);
+        const exp = await store.getExperiment(experimentId);
+        if (!exp) throw new GrowthError('not_found', `Experiment "${experimentId}" not found.`);
+        const framework = await detectFramework(root);
+        const appUrl = await resolveAppUrl(root, framework, opts.appUrl ?? opts.baseUrl);
+        const connectors = await listConnectors(root);
+        const plan = await resolvePreflightPlan({
+          root,
+          experiment: exp,
+          connectors,
+          framework,
+          appUrl,
+        });
+        const warnings = plan.evidence.preferred_evidence === 'local_jsonl'
+          ? [
+              {
+                code: 'LOCAL_EVIDENCE_CEILING',
+                message: 'Local JSONL can validate synthetic app emission only; it does not prove provider ingestion.',
+              },
+            ]
+          : [];
+        return {
+          data: { plan },
+          warnings,
+          humanText: JSON.stringify(plan, null, 2),
+          nextSteps: [
+            `Evidence preference: ${plan.evidence.preferred_evidence}.`,
+            `Packet app URL: ${plan.packet_app_url}.`,
+            `Readiness ceiling: ${plan.evidence.readiness_ceiling}.`,
+            plan.next_command,
+          ],
+          next: {
+            command: plan.next_command,
+            until: plan.readiness.blocked.length
+              ? 'blocked evidence setup is resolved'
+              : 'preflight advances to the next readiness tier',
+          },
+        };
+      });
+    });
 
   preflight
     .command('prepare <experiment_id>')
