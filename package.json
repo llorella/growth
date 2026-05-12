@@ -11,7 +11,7 @@
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
     "prepack": "npm run build",
-    "dogfood:local": "npm run build && node outerloop/dogfood-local.mjs",
+    "verify:aptny": "npm run build && node verification/scripts/run-agent.mjs --target verification/targets/aptny.json --no-build",
     "test": "npm run build && node --test test/*.test.js"
   },
   "files": [

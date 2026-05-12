@@ -28,8 +28,9 @@ outer-loop.md
 .growth/audit.jsonl
 .growth/data/
 .growth/runs/*/secrets/
-outerloop/runs/*
-!outerloop/runs/.gitignore
+outerloop/
+verification/runs/*
+!verification/runs/.gitignore
 
 # Tool caches
 .cache/

@@ -1,0 +1,7 @@
+{
+  "id": "aptny-onboarding",
+  "repo": "~/aptny",
+  "baseRef": "HEAD",
+  "envFiles": [".env"],
+  "prompt": "verification/prompts/aptny-onboarding-experiment.md"
+}
