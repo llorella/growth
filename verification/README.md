@@ -11,6 +11,7 @@ The harness keeps target repositories disposable:
 - write a short agent prompt
 - optionally launch an agent in the worktree
 - collect the target repo diff, Growth state, run packets, and traces
+- write a Growth usage audit for real agent sessions
 - remove the worktree unless `--keep` is set
 
 Run directories are ignored under `verification/runs/`.
@@ -42,12 +43,22 @@ npm run verify:aptny -- --keep
 
 After a run, inspect:
 
+- `run.json`
 - `artifacts/git-status.txt`
 - `artifacts/git-diff.patch`
 - `artifacts/growth/`
+- `artifacts/growth-usage-audit.json`
 - `traces/agent.stdout.log`
 - `traces/agent.stderr.log`
 
-The harness does not grade the run. The reviewer decides whether the agent used
-Growth well, whether the target repo diff is sound, and whether the Growth
-artifacts support the conclusion.
+The usage audit grades whether the agent stayed inside Growth's control plane
+and flags escape hatches such as raw env reads, direct provider API probes, or
+managed `.growth` state reads. `run.json` repeats the run-level summary as
+`growth_usage_score`, `growth_usage_grade`, and count fields, with the full
+details in `artifacts/growth-usage-audit.json`. The audit separates preflight
+planning from a preflight run attempt, completion, or explicit blocker. It is a
+diagnostic signal only. The reviewer still decides whether the target repo diff
+is sound and whether the Growth artifacts support the product conclusion.
+
+Runs where the agent is unavailable, for example a Codex usage-limit failure,
+are classified as `agent_unavailable` and do not receive a Growth usage audit.

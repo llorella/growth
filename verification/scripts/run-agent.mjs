@@ -76,14 +76,22 @@ const agentResult = await runShell(command, {
   stderrFile: path.join(tracesDir, 'agent.stderr.log'),
   allowFailure: true,
 });
+const agentStatus = classifyAgentResult(agentResult);
 
-await writeRun({ status: agentResult.status === 0 ? 'agent_completed' : 'agent_failed', agent_exit_code: agentResult.status });
+await writeRun({
+  status: agentStatus.runStatus,
+  agent_exit_code: agentResult.status,
+  ...(agentStatus.reason ? { agent_failure_reason: agentStatus.reason } : {}),
+});
 
 await run('node', ['verification/scripts/collect-artifacts.mjs', '--target', opts.target, '--run-dir', path.relative(repoRoot, runDir), '--worktree', worktree], {
   cwd: repoRoot,
   stdoutFile: path.join(tracesDir, 'collect.stdout.log'),
   stderrFile: path.join(tracesDir, 'collect.stderr.log'),
 });
+
+const growthUsage = await analyzeGrowthUsage(agentStatus);
+await writeRun(growthUsage);
 
 if (!opts.keep) {
   await run('git', ['-C', targetRepo, 'worktree', 'remove', '--force', worktree], {
@@ -93,17 +101,24 @@ if (!opts.keep) {
   });
 }
 
-await writeRun({ status: agentResult.status === 0 ? 'completed' : 'agent_failed', agent_exit_code: agentResult.status });
+await writeRun({
+  status: agentStatus.finalStatus,
+  agent_exit_code: agentResult.status,
+  ...(agentStatus.reason ? { agent_failure_reason: agentStatus.reason } : {}),
+  ...growthUsage,
+});
 
 process.stdout.write(
   JSON.stringify(
     {
-      status: agentResult.status === 0 ? 'completed' : 'agent_failed',
+      status: agentStatus.finalStatus,
       run_id: runId,
       run_dir: path.relative(repoRoot, runDir),
       artifacts_dir: path.relative(repoRoot, path.join(runDir, 'artifacts')),
       traces_dir: path.relative(repoRoot, tracesDir),
       agent_exit_code: agentResult.status,
+      ...(agentStatus.reason ? { agent_failure_reason: agentStatus.reason } : {}),
+      ...growthUsage,
     },
     null,
     2,
@@ -195,6 +210,54 @@ async function writeRun(patch) {
   );
 }
 
+async function analyzeGrowthUsage(agentStatus) {
+  if (agentStatus.runStatus === 'agent_unavailable') {
+    return { growth_usage_audit_status: 'skipped_agent_unavailable' };
+  }
+
+  const result = await run('node', ['verification/scripts/analyze-run.mjs', '--run-dir', path.relative(repoRoot, runDir)], {
+    cwd: repoRoot,
+    stdoutFile: path.join(tracesDir, 'analyze.stdout.log'),
+    stderrFile: path.join(tracesDir, 'analyze.stderr.log'),
+    allowFailure: true,
+  });
+
+  if (result.status !== 0) {
+    return {
+      growth_usage_audit_status: 'failed',
+      growth_usage_audit_exit_code: result.status,
+    };
+  }
+
+  let audit;
+  try {
+    audit = JSON.parse(result.stdout);
+  } catch {
+    return {
+      growth_usage_audit_status: 'failed',
+      growth_usage_audit_exit_code: result.status,
+      growth_usage_audit_error: 'invalid_json',
+    };
+  }
+
+  return {
+    growth_usage_audit_status: 'scored',
+    growth_usage_score: audit.score,
+    growth_usage_grade: audit.grade,
+    growth_usage_command_count: audit.growth_command_count,
+    growth_usage_anti_pattern_count: Array.isArray(audit.anti_patterns) ? audit.anti_patterns.length : null,
+    growth_usage_anti_pattern_ids: isRecord(audit.anti_pattern_counts)
+      ? Object.keys(audit.anti_pattern_counts).sort()
+      : [],
+    growth_usage_missing_required_count: Array.isArray(audit.missing_required) ? audit.missing_required.length : null,
+    growth_usage_artifact: 'artifacts/growth-usage-audit.json',
+  };
+}
+
+function isRecord(value) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 async function assertRunDirAvailable(dir, force) {
   try {
     await stat(dir);
@@ -236,6 +299,21 @@ function timestampId() {
 
 function shellQuote(value) {
   return `'${String(value).replaceAll("'", "'\\''")}'`;
+}
+
+function classifyAgentResult(result) {
+  if (result.status === 0) {
+    return { runStatus: 'agent_completed', finalStatus: 'completed' };
+  }
+  const combined = `${result.stdout}\n${result.stderr}`.toLowerCase();
+  if (combined.includes("you've hit your usage limit") || combined.includes('usage limit')) {
+    return {
+      runStatus: 'agent_unavailable',
+      finalStatus: 'agent_unavailable',
+      reason: 'usage_limit',
+    };
+  }
+  return { runStatus: 'agent_failed', finalStatus: 'agent_failed' };
 }
 
 async function run(command, args, options = {}) {
