@@ -22,12 +22,16 @@ import {
   defaultLocalConnector,
   defaultPostHogConnector,
   defaultPostHogMappings,
-  isEnvReference,
 } from '../lib/connector-catalog.js';
+import {
+  postHogCapabilityStatus,
+  type PostHogCapabilityStatus,
+  type PostHogMissingRequirement,
+} from '../lib/posthog-capabilities.js';
 import { paths } from '../lib/paths.js';
 import { readShared, writeShared } from '../lib/state.js';
 import { GrowthError } from '../lib/envelope.js';
-import { parseEnvText, readEnvValue } from '../lib/env-files.js';
+import { parseEnvText } from '../lib/env-files.js';
 
 export function registerConnectors(program: Command, ctx: RunCtx): void {
   const connector = program
@@ -186,10 +190,10 @@ export function registerConnectors(program: Command, ctx: RunCtx): void {
       });
     });
 
-  const auth = connector.command('auth').description('Connector authentication helpers.');
+  const auth = connector.command('auth').description('Connector provider capability helpers.');
   auth
     .command('check <source>')
-    .description('Check connector auth readiness without printing secrets.')
+    .description('Check connector telemetry and provider-pull readiness without printing secrets.')
     .action(async (source: string) => {
       await wrap<unknown>('growth connector auth check', ctx, async () => {
         await requireInitialized(ctx.getRoot());
@@ -207,34 +211,209 @@ export function registerConnectors(program: Command, ctx: RunCtx): void {
             nextSteps: [`growth connector validate ${source} --json`],
           };
         }
-        const apiKeyEnv = connectorApiKeyEnv(c);
-        const projectId = c.posthog?.project_id;
-        const projectIdPresent =
-          projectId === undefined
-            ? true
-            : isEnvReference(projectId)
-            ? !!(await readEnvValue(ctx.getRoot(), projectId))
-            : projectId !== undefined;
-        const apiKeyPresent = apiKeyEnv ? !!(await readEnvValue(ctx.getRoot(), apiKeyEnv)) : true;
+        const authStatus = await postHogCapabilityStatus(ctx.getRoot(), c);
+        const ready = authStatus.capabilities.provider_pull.ready;
         return {
-          data: {
-            source: c.source,
-            kind: c.kind,
-            host: c.posthog?.host,
-            project_id_required: projectId !== undefined,
-            project_id_present: projectIdPresent,
-            api_key_env: apiKeyEnv,
-            api_key_present: apiKeyPresent,
-            required_scopes: connectorRequiredScopes(c.kind),
-          },
-          humanText: `${source} auth: project_id=${projectId === undefined ? 'not required' : projectIdPresent ? 'present' : 'missing'} api_key=${apiKeyPresent ? 'present' : 'missing'}`,
+          data: authStatus,
+          humanText: `${source} capabilities: telemetry_write=${authStatus.capabilities.telemetry_write.ready ? 'ready' : 'blocked'} provider_pull=${ready ? 'ready' : 'blocked'}`,
           nextSteps:
-            apiKeyPresent && projectIdPresent
+            ready
               ? [`growth connector validate ${source} --json`]
-              : [`Set ${apiKeyEnv ?? 'the connector API key env var'}${projectId === undefined ? '' : ' and project id'}, then rerun this command.`],
+              : [`growth connector auth setup ${source} --json`],
+          next: ready
+            ? {
+                command: `growth connector validate ${source} --json`,
+                until: 'connector mappings validate against active experiments',
+              }
+            : {
+                command: `growth connector auth setup ${source} --json`,
+                until: 'missing provider-pull requirements are resolved through Growth',
+              },
         };
       });
     });
+
+  auth
+    .command('setup <source>')
+    .description('Explain safe setup steps for provider capabilities without printing secrets.')
+    .action(async (source: string) => {
+      await wrap<unknown>('growth connector auth setup', ctx, async () => {
+        await requireInitialized(ctx.getRoot());
+        const c = await getConnector(ctx.getRoot(), source);
+        if (!c) throw new GrowthError('not_found', `Connector "${source}" not found.`);
+        if (c.kind !== 'posthog') {
+          return {
+            data: {
+              source: c.source,
+              kind: c.kind,
+              ready: true,
+              resolution: 'ready',
+              blocked: false,
+              manual_input_required: false,
+              safe_commands: [],
+              retry_command: `growth connector auth check ${source} --json`,
+              auth_required: false,
+              missing_requirements: [],
+              policy: providerCapabilityPolicy(),
+            },
+            humanText: `${source} auth setup: not required`,
+            nextSteps: [`growth connector validate ${source} --json`],
+            next: {
+              command: `growth connector validate ${source} --json`,
+              until: 'connector mappings validate against active experiments',
+            },
+          };
+        }
+
+        const authStatus = await postHogCapabilityStatus(ctx.getRoot(), c);
+        const setup = await postHogAuthSetup(ctx.getRoot(), c, authStatus);
+        const ready = authStatus.capabilities.provider_pull.ready;
+        return {
+          data: setup,
+          humanText: ready
+            ? `${source} auth setup: ready`
+            : `${source} provider pull setup: missing ${authStatus.capabilities.provider_pull.missing.join(', ')}`,
+          nextSteps: ready
+            ? [`growth connector validate ${source} --json`]
+            : [
+                'Stop automated provider-backed preflight until the missing read-side values are supplied.',
+                'Manual input required: supply missing provider-pull values through Growth env commands.',
+                'Do not read .env files or call analytics provider APIs directly.',
+              ],
+          next: ready
+            ? {
+                command: `growth connector validate ${source} --json`,
+                until: 'connector mappings validate against active experiments',
+              }
+            : undefined,
+        };
+      });
+    });
+}
+
+interface PostHogAuthRequirement {
+  id: string;
+  capability: 'telemetry_write' | 'provider_pull';
+  field: PostHogMissingRequirement;
+  env?: string;
+  present: boolean;
+  manual_input_required: boolean;
+  safe_commands: string[];
+  guidance: string;
+}
+
+async function postHogAuthSetup(
+  root: string,
+  connector: ConnectorConfig,
+  authStatus: PostHogCapabilityStatus,
+): Promise<{
+  source: string;
+  kind: 'posthog';
+  ready: boolean;
+  resolution: 'ready' | 'manual_input_required';
+  blocked: boolean;
+  manual_input_required: boolean;
+  safe_commands: string[];
+  retry_command: string;
+  stop_reason?: string;
+  telemetry_write_ready: boolean;
+  provider_pull_ready: boolean;
+  status: PostHogCapabilityStatus;
+  missing_requirements: PostHogAuthRequirement[];
+  import_suggestion?: { provider: 'stripe-projects'; command: string; reason: string };
+  policy: ReturnType<typeof providerCapabilityPolicy>;
+}> {
+  const importSuggestion = await stripeProjectsImportSuggestion(root, connector, authStatus);
+  const requirements: PostHogAuthRequirement[] = [];
+  if (!authStatus.api_key_present) {
+    requirements.push({
+      id: 'posthog-api-key',
+      capability: 'telemetry_write',
+      field: 'api_key',
+      env: authStatus.api_key_env,
+      present: false,
+      manual_input_required: true,
+      safe_commands: authStatus.api_key_env ? [`growth env set --key ${authStatus.api_key_env} --stdin`] : [],
+      guidance: authStatus.api_key_env
+        ? `Provide the PostHog analytics API key through growth env set for ${authStatus.api_key_env}.`
+        : 'Configure posthog.api_key_env on the connector, then rerun auth setup.',
+    });
+  }
+  if (!authStatus.project_id_present) {
+    requirements.push({
+      id: 'posthog-provider-pull-project-id',
+      capability: 'provider_pull',
+      field: 'project_id',
+      env: authStatus.project_id_env,
+      present: false,
+      manual_input_required: true,
+      safe_commands: authStatus.project_id_env ? [`growth env set --key ${authStatus.project_id_env} --stdin`] : [],
+      guidance: authStatus.project_id_env
+        ? `Provide the numeric PostHog project id from PostHog project settings through growth env set for ${authStatus.project_id_env}.`
+        : 'Set posthog.project_id to an env var name or numeric project id with growth connector add/import, then rerun auth setup.',
+    });
+  }
+  const ready = authStatus.capabilities.provider_pull.ready;
+  return {
+    source: connector.source,
+    kind: 'posthog',
+    ready,
+    resolution: ready ? 'ready' : 'manual_input_required',
+    blocked: !ready,
+    manual_input_required: !ready && requirements.some((requirement) => requirement.manual_input_required),
+    safe_commands: requirements.flatMap((requirement) => requirement.safe_commands),
+    retry_command: `growth connector auth check ${connector.source} --json`,
+    ...(!ready
+      ? {
+          stop_reason:
+            'Provider-backed evidence setup requires manual read-side values. Stop automated provider preflight until the missing values are supplied through Growth commands.',
+        }
+      : {}),
+    telemetry_write_ready: authStatus.capabilities.telemetry_write.ready,
+    provider_pull_ready: authStatus.capabilities.provider_pull.ready,
+    status: authStatus,
+    missing_requirements: requirements,
+    ...(importSuggestion ? { import_suggestion: importSuggestion } : {}),
+    policy: providerCapabilityPolicy(),
+  };
+}
+
+async function stripeProjectsImportSuggestion(
+  root: string,
+  connector: ConnectorConfig,
+  authStatus: PostHogCapabilityStatus,
+): Promise<{ provider: 'stripe-projects'; command: string; reason: string } | undefined> {
+  if (authStatus.capabilities.provider_pull.ready) return undefined;
+  try {
+    const imported = await discoverStripeProjectsPostHog(root);
+    if (
+      imported.apiKeyEnv !== connectorApiKeyEnv(connector) ||
+      imported.host !== connector.posthog?.host ||
+      (imported.projectId !== undefined && imported.projectId !== connector.posthog?.project_id)
+    ) {
+      return {
+        provider: 'stripe-projects',
+        command: 'growth connector import stripe-projects --json --yes',
+        reason: `Stripe Projects metadata references PostHog connector settings in ${imported.source_file}.`,
+      };
+    }
+  } catch {
+    // Setup remains useful without Stripe Projects metadata.
+  }
+  return undefined;
+}
+
+function providerCapabilityPolicy() {
+  return {
+    secret_safe: true,
+    do_not_read_env_files_directly: true,
+    do_not_probe_provider_apis_directly: true,
+    use_growth_commands: [
+      'growth connector auth check <source> --json',
+      'growth connector auth setup <source> --json',
+      'growth env set --key <KEY> --stdin',
+    ],
+  };
 }
 
 function validateConnectorShapes(connectors: ConnectorConfig[]): void {

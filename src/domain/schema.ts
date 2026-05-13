@@ -41,6 +41,23 @@ export const experimentSchema = {
           name: { type: 'string' },
           description: { type: 'string' },
           weight: { type: 'number', minimum: 0, maximum: 100 },
+          implementation: {
+            type: 'object',
+            description:
+              'Optional concrete code artifact for this variant. Analysis still keys by variant id; implementation metadata exists for code review, rollback, and variant-specific preflight.',
+            properties: {
+              status: {
+                type: 'string',
+                enum: ['planned', 'in_progress', 'ready', 'merged', 'abandoned'],
+              },
+              branch: { type: 'string' },
+              worktree_path: { type: 'string' },
+              commit: { type: 'string' },
+              pr_url: { type: 'string' },
+              app_url: { type: 'string' },
+            },
+            additionalProperties: false,
+          },
         },
         additionalProperties: false,
       },

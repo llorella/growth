@@ -14,6 +14,16 @@ export interface Variant {
   name: string;
   description?: string;
   weight: number;
+  implementation?: VariantImplementation;
+}
+
+export interface VariantImplementation {
+  status?: 'planned' | 'in_progress' | 'ready' | 'merged' | 'abandoned';
+  branch?: string;
+  worktree_path?: string;
+  commit?: string;
+  pr_url?: string;
+  app_url?: string;
 }
 
 export interface Metric {

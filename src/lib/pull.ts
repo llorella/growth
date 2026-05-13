@@ -20,7 +20,12 @@ import {
   readPath,
   type ConnectorConfig,
 } from './connectors.js';
-import { POSTHOG_DEFAULT_API_KEY_ENV, POSTHOG_DEFAULT_HOST, connectorApiKeyEnv } from './connector-catalog.js';
+import {
+  POSTHOG_DEFAULT_API_KEY_ENV,
+  POSTHOG_DEFAULT_HOST,
+  connectorApiKeyEnv,
+} from './connector-catalog.js';
+import { postHogProjectIdReference, readPostHogProviderProjectId } from './posthog-capabilities.js';
 import { readEnvValue } from './env-files.js';
 import type { Assignment, ExperimentEvent } from '../domain/types.js';
 import { containsTimestamp } from '../domain/event-window.js';
@@ -428,17 +433,14 @@ async function fetchPostHog(
     );
   }
   const host = connector.posthog.host ?? POSTHOG_DEFAULT_HOST;
-  const configuredProjectId = connector.posthog.project_id;
-  if (configuredProjectId === undefined) {
+  const configuredProjectId = postHogProjectIdReference(connector);
+  const projectId = await readPostHogProviderProjectId(root, connector);
+  if (!projectId) {
     throw new GrowthError(
       'missing_project_id',
-      'PostHog event pulls require a project id. The analytics API key and host are enough to configure app telemetry, but not enough for this pull API.',
+      `PostHog provider pulls require a project id. App telemetry can be configured with the analytics API key and host, but provider-backed preflight needs ${configuredProjectId} to read events back from PostHog.`,
     );
   }
-  const projectId =
-    typeof configuredProjectId === 'string' && (await readEnvValue(root, configuredProjectId))
-      ? await readEnvValue(root, configuredProjectId)
-      : configuredProjectId;
 
   const eventNames = Object.keys(connector.mappings);
   const results: unknown[] = [];

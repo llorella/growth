@@ -22,6 +22,12 @@ test('connector catalog owns PostHog auth defaults and synthetic mapping paths',
   assert.equal(mappings.activation_completed.payload_paths.agent_generated, 'properties.agent_generated');
   assert.equal(mappings.activation_completed.payload_paths.agent_run_id, 'properties.agent_run_id');
   assert.equal(mappings.activation_completed.payload_paths.session_id, 'properties.session_id');
+
+  const telemetryOnly = defaultPostHogConnector(undefined, {
+    apiKeyEnv: 'POSTHOG_ANALYTICS_API_KEY',
+  });
+  assert.equal(telemetryOnly.posthog?.project_id, undefined);
+  assert.deepEqual(connectorRequiredEnv(telemetryOnly), ['POSTHOG_ANALYTICS_API_KEY']);
 });
 
 test('connector catalog owns local connector taxonomy mappings', () => {

@@ -14,7 +14,7 @@ import { resolveAppUrl } from '../lib/app-url.js';
 import { pull as pullEvents } from '../lib/pull.js';
 import { listConnectors } from '../lib/connectors.js';
 import { preflightReportSchema } from '../domain/schema.js';
-import type { AgentPacketSummary, GrowthRun } from '../domain/types.js';
+import type { AgentPacketSummary, Experiment, GrowthRun } from '../domain/types.js';
 import {
   allLocalEvidenceWindow,
   closeEventWindow,
@@ -27,7 +27,7 @@ import {
   packetScenario,
   packetVariant,
 } from '../preflight/packets.js';
-import { requiredPreflightEvents } from '../preflight/coverage.js';
+import { scenarioExpectedEvents } from '../preflight/coverage.js';
 import { auditPreflight } from '../preflight/audit.js';
 import { auditMarkdown } from '../preflight/markdown.js';
 import {
@@ -37,7 +37,7 @@ import {
   synthesizeReportsFromEvents,
 } from '../preflight/reports.js';
 import type { PreflightAudit, PreflightReportSummary } from '../preflight/types.js';
-import { resolvePreflightPlan } from '../preflight/plan.js';
+import { resolvePreflightPlan, withStartPath, type PreflightPlan } from '../preflight/plan.js';
 
 const ajv = new (Ajv2020 as unknown as { new (opts: object): Ajv2020 })({
   allErrors: true,
@@ -45,6 +45,33 @@ const ajv = new (Ajv2020 as unknown as { new (opts: object): Ajv2020 })({
 });
 (addFormats as unknown as (a: Ajv2020) => void)(ajv);
 const validatePreflightReport = ajv.compile(preflightReportSchema);
+
+interface PreflightPacketOptions {
+  agents: number;
+  browser: boolean;
+  appUrl?: string;
+  baseUrl?: string;
+  forceVariant?: string;
+  balanceVariants: boolean;
+}
+
+function planWarnings(plan: PreflightPlan) {
+  const warnings = [];
+  if (plan.evidence.preferred_evidence === 'local_jsonl') {
+    warnings.push({
+      code: 'LOCAL_EVIDENCE_CEILING',
+      message: 'Local JSONL can validate synthetic app emission only; it does not prove provider ingestion.',
+    });
+  }
+  if (plan.browser_context.requires_authenticated_session) {
+    warnings.push({
+      code: 'AUTHENTICATED_BROWSER_CONTEXT',
+      message:
+        'Experiment targeting indicates an authenticated browser context. Browser packets need an authenticated test session and should report login/paywall blockers explicitly.',
+    });
+  }
+  return warnings;
+}
 
 export function registerPreflight(program: Command, ctx: RunCtx): void {
   const preflight = program.command('preflight').description('Prepare, pull, and audit synthetic browser-agent preflights.');
@@ -75,14 +102,7 @@ export function registerPreflight(program: Command, ctx: RunCtx): void {
           framework,
           appUrl,
         });
-        const warnings = plan.evidence.preferred_evidence === 'local_jsonl'
-          ? [
-              {
-                code: 'LOCAL_EVIDENCE_CEILING',
-                message: 'Local JSONL can validate synthetic app emission only; it does not prove provider ingestion.',
-              },
-            ]
-          : [];
+        const warnings = planWarnings(plan);
         return {
           data: { plan },
           warnings,
@@ -91,6 +111,9 @@ export function registerPreflight(program: Command, ctx: RunCtx): void {
             `Evidence preference: ${plan.evidence.preferred_evidence}.`,
             `Packet app URL: ${plan.packet_app_url}.`,
             `Readiness ceiling: ${plan.evidence.readiness_ceiling}.`,
+            ...(plan.browser_context.requires_authenticated_session
+              ? ['Browser packets require an authenticated test session for the target route.']
+              : []),
             plan.next_command,
           ],
           next: {
@@ -98,6 +121,51 @@ export function registerPreflight(program: Command, ctx: RunCtx): void {
             until: plan.readiness.blocked.length
               ? 'blocked evidence setup is resolved'
               : 'preflight advances to the next readiness tier',
+          },
+        };
+      });
+    });
+
+  preflight
+    .command('run <experiment_id>')
+    .description('Plan the preflight and prepare packets when the planned evidence path is unblocked.')
+    .option('--agents <n>', 'Number of agent packets.', (v) => parseInt(v, 10), 4)
+    .option('--browser', 'Prepare browser URLs and browser-use policy.', false)
+    .option('--app-url <url>', 'Application URL agents should open.')
+    .option('--base-url <url>', 'Alias for --app-url.')
+    .option('--force-variant <variant>', 'Force a variant in packet URLs for test mode.')
+    .option('--no-balance-variants', 'Do not force round-robin variants in packet URLs.')
+    .action(async (experimentId: string, opts: PreflightPacketOptions) => {
+      await wrap<unknown>(`${commandPrefix} run`, ctx, async () => {
+        await requireInitialized(ctx.getRoot());
+        const resolved = await resolvePreflightPacketContext(ctx.getRoot(), experimentId, opts);
+        if (resolved.plan.readiness.blocked.length) {
+          return {
+            data: {
+              status: 'blocked',
+              plan: resolved.plan,
+              run: null,
+            },
+            humanText: JSON.stringify(resolved.plan, null, 2),
+            warnings: [
+              {
+                code: 'PREFLIGHT_BLOCKED',
+                message: resolved.plan.readiness.blocked.join(' '),
+              },
+            ],
+            nextSteps: [resolved.plan.next_command],
+            next: {
+              command: resolved.plan.next_command,
+              until: 'blocked evidence setup is resolved',
+            },
+          };
+        }
+        const prepared = await preparePreflightPackets(ctx.getRoot(), experimentId, opts, resolved);
+        return {
+          ...prepared,
+          data: {
+            ...prepared.data,
+            status: 'prepared',
           },
         };
       });
@@ -126,133 +194,8 @@ export function registerPreflight(program: Command, ctx: RunCtx): void {
       ) => {
         await wrap(`${commandPrefix} prepare`, ctx, async () => {
           await requireInitialized(ctx.getRoot());
-          if (opts.appUrl && opts.baseUrl && opts.appUrl !== opts.baseUrl) {
-            throw new GrowthError('conflicting_app_urls', '--app-url and --base-url were both provided with different values.');
-          }
-          const store = new Store(ctx.getRoot());
-          const exp = await store.getExperiment(experimentId);
-          if (!exp) throw new GrowthError('not_found', `Experiment "${experimentId}" not found.`);
-          const framework = await detectFramework(ctx.getRoot());
-          const appUrl = await resolveAppUrl(ctx.getRoot(), framework, opts.appUrl ?? opts.baseUrl);
-          if (opts.forceVariant && !exp.variants.some((variant) => variant.id === opts.forceVariant)) {
-            throw new GrowthError('invalid_variant', `Variant "${opts.forceVariant}" is not part of ${experimentId}.`, {
-              variants: exp.variants.map((variant) => variant.id),
-            });
-          }
-          if (opts.agents < 1 || opts.agents > 50) {
-            throw new GrowthError('invalid_agents', '--agents must be between 1 and 50.');
-          }
-          const p = paths(ctx.getRoot());
-          const runId = `preflight_${new Date().toISOString().replace(/[-:.]/g, '').replace('T', 'T').slice(0, 15)}Z`;
-          const runDir = path.join(p.runsDir, runId);
-          const packetDir = path.join(runDir, 'agent-packets');
-          const reportsDir = path.join(runDir, 'reports');
-          await fs.mkdir(packetDir, { recursive: true });
-          await fs.mkdir(reportsDir, { recursive: true });
-          await fs.writeFile(path.join(runDir, 'batch-start.txt'), new Date().toISOString() + '\n');
-
-          const agents: AgentPacketSummary[] = [];
-          for (let i = 1; i <= opts.agents; i++) {
-            const agentId = `${runId}_agent_${i}`;
-            const variantId = packetVariant(exp.variants.map((variant) => variant.id), i - 1, opts);
-            const scenario = packetScenario(exp, i - 1);
-            const url = buildAgentUrl(appUrl, experimentId, agentId, variantId);
-            const base = `agent-${i}`;
-            const promptFile = path.join(packetDir, `${base}.prompt.txt`);
-            const policyFile = path.join(packetDir, `${base}.policy.json`);
-            const schemaFile = path.join(packetDir, `${base}.report.schema.json`);
-            const urlFile = path.join(packetDir, `${base}.url.txt`);
-            await fs.writeFile(promptFile, packetPrompt(exp, scenario));
-            await fs.writeFile(urlFile, url + '\n');
-            await fs.writeFile(
-              policyFile,
-              JSON.stringify(
-                {
-                  browser: opts.browser,
-                  synthetic_variant: variantId ?? null,
-                  may_read_source: false,
-                  may_read_env: false,
-                  may_modify_files: false,
-                  allowed_url: url,
-                  scenario,
-                  expected_events: requiredPreflightEvents(exp),
-                },
-                null,
-                2,
-              ) + '\n',
-            );
-            await fs.writeFile(schemaFile, JSON.stringify(preflightReportSchema, null, 2) + '\n');
-            agents.push({
-              agent_id: agentId,
-              browser: opts.browser,
-              url_file: path.relative(ctx.getRoot(), urlFile),
-              prompt_file: path.relative(ctx.getRoot(), promptFile),
-              report_schema_file: path.relative(ctx.getRoot(), schemaFile),
-              policy_file: path.relative(ctx.getRoot(), policyFile),
-              variant_id: variantId,
-            });
-          }
-
-          const warnings = [];
-          if (opts.forceVariant) {
-            warnings.push({
-              code: 'FORCED_VARIANT_TEST_MODE',
-              message: 'Packet URLs force one variant. Use this only for instrumentation testing.',
-            });
-          } else if (opts.balanceVariants !== false) {
-            warnings.push({
-              code: 'BALANCED_SYNTHETIC_VARIANTS',
-              message:
-                'Packet URLs force round-robin variants so synthetic traffic can exercise every branch. This is browser-agent test traffic only.',
-            });
-          }
-          warnings.push({
-            code: 'EVENT_WINDOW_START',
-            message:
-              'Only events emitted at or after this preflight prepare time are included by growth preflight pull. Earlier instrumentation-test events are intentionally excluded.',
-          });
-          if (!opts.appUrl && !opts.baseUrl) {
-            warnings.push({
-              code: 'APP_URL_RESOLVED',
-              message: `Using ${appUrl} for packet URLs. Override with --app-url or --base-url when your dev server uses a different URL.`,
-            });
-          }
-
-          const createdAt = new Date().toISOString();
-          const run: GrowthRun = {
-            id: runId,
-            type: 'preflight',
-            experiment_id: experimentId,
-            status: 'prepared',
-            created_at: createdAt,
-            event_window: openEventWindow(createdAt),
-            agents,
-            artifacts: {
-              run_dir: path.relative(ctx.getRoot(), runDir),
-              launch_manual: path.relative(ctx.getRoot(), path.join(runDir, 'launch.manual.md')),
-            },
-            warnings,
-          };
-          const eventWindowAfter = run.event_window?.after ?? run.created_at;
-          await fs.writeFile(path.join(runDir, 'run.json'), JSON.stringify(run, null, 2) + '\n');
-          await fs.writeFile(path.join(runDir, 'launch.manual.md'), launchManual(run));
-          return {
-            data: { run, run_id: run.id, app_url: appUrl, framework_hint: { detected: framework, advisory_only: true } },
-            humanText: `Prepared preflight ${runId} with ${agents.length} agent packet(s).`,
-            warnings: run.warnings,
-            nextSteps: [
-              `Packet app URL: ${appUrl}. Override future runs with --app-url or --base-url.`,
-              `Open ${path.relative(ctx.getRoot(), path.join(runDir, 'launch.manual.md'))}.`,
-              `Events before ${eventWindowAfter} will not be included in preflight pulls.`,
-              `If browser execution writes local JSONL, complete in one step with growth preflight complete-local ${runId} --events-file <events.jsonl> --json.`,
-              `Attach reports with growth preflight attach-report ${runId} --agent <n> --file <report.json> --json.`,
-              `Complete with growth preflight complete ${runId} --json.`,
-            ],
-            next: {
-              command: `growth preflight complete-local ${runId} --events-file <events.jsonl> --json`,
-              until: 'synthetic browser events are attached and launch-readiness audit is written',
-            },
-          };
+          const resolved = await resolvePreflightPacketContext(ctx.getRoot(), experimentId, opts);
+          return preparePreflightPackets(ctx.getRoot(), experimentId, opts, resolved);
         });
       },
     );
@@ -370,7 +313,7 @@ export function registerPreflight(program: Command, ctx: RunCtx): void {
         run.event_window = closeEventWindow(run.event_window, run.created_at, run.completed_at);
         await writeRun(ctx.getRoot(), run);
         const connectors = await listConnectors(ctx.getRoot());
-        const preferredSource = connectors.find((connector) => connector.source === 'local')?.source ?? connectors[0]?.source;
+        const preferredSource = preferredPullSource(connectors);
         return {
           data: { run },
           humanText: `Completed preflight ${runId}.`,
@@ -506,7 +449,7 @@ export function registerPreflight(program: Command, ctx: RunCtx): void {
           next: {
             command:
               audit.recommendation === 'ready_for_provider_preflight'
-                ? `growth preflight prepare ${experimentId} --agents 4 --browser --json`
+                ? `growth preflight run ${experimentId} --agents 4 --browser --json`
                 : `growth preflight dry-run ${experimentId} --events-file ${opts.eventsFile} --json`,
             until:
               audit.recommendation === 'ready_for_provider_preflight'
@@ -552,6 +495,236 @@ async function writeRun(root: string, run: GrowthRun): Promise<void> {
   await fs.writeFile(path.join(paths(root).runsDir, run.id, 'run.json'), JSON.stringify(run, null, 2) + '\n');
 }
 
+async function resolvePreflightPacketContext(
+  root: string,
+  experimentId: string,
+  opts: Pick<PreflightPacketOptions, 'appUrl' | 'baseUrl' | 'forceVariant' | 'agents'>,
+): Promise<{
+  exp: Experiment;
+  framework: string;
+  appUrl: string;
+  plan: PreflightPlan;
+}> {
+  if (opts.appUrl && opts.baseUrl && opts.appUrl !== opts.baseUrl) {
+    throw new GrowthError('conflicting_app_urls', '--app-url and --base-url were both provided with different values.');
+  }
+  const store = new Store(root);
+  const exp = await store.getExperiment(experimentId);
+  if (!exp) throw new GrowthError('not_found', `Experiment "${experimentId}" not found.`);
+  const framework = await detectFramework(root);
+  const appUrl = await resolveAppUrl(root, framework, opts.appUrl ?? opts.baseUrl);
+  const connectors = await listConnectors(root);
+  const plan = await resolvePreflightPlan({
+    root,
+    experiment: exp,
+    connectors,
+    framework,
+    appUrl,
+  });
+  if (opts.forceVariant && !exp.variants.some((variant) => variant.id === opts.forceVariant)) {
+    throw new GrowthError('invalid_variant', `Variant "${opts.forceVariant}" is not part of ${experimentId}.`, {
+      variants: exp.variants.map((variant) => variant.id),
+    });
+  }
+  if (opts.agents < 1 || opts.agents > 50) {
+    throw new GrowthError('invalid_agents', '--agents must be between 1 and 50.');
+  }
+  return { exp, framework, appUrl, plan };
+}
+
+async function preparePreflightPackets(
+  root: string,
+  experimentId: string,
+  opts: PreflightPacketOptions,
+  resolved: Awaited<ReturnType<typeof resolvePreflightPacketContext>>,
+) {
+  const { exp, framework, appUrl, plan } = resolved;
+  const packetAppUrl = plan.packet_app_url;
+  const p = paths(root);
+  const runId = `preflight_${new Date().toISOString().replace(/[-:.]/g, '').replace('T', 'T').slice(0, 15)}Z`;
+  const runDir = path.join(p.runsDir, runId);
+  const packetDir = path.join(runDir, 'agent-packets');
+  const reportsDir = path.join(runDir, 'reports');
+  await fs.mkdir(packetDir, { recursive: true });
+  await fs.mkdir(reportsDir, { recursive: true });
+  await fs.writeFile(path.join(runDir, 'batch-start.txt'), new Date().toISOString() + '\n');
+
+  const agents: AgentPacketSummary[] = [];
+  for (let i = 1; i <= opts.agents; i++) {
+    const agentId = `${runId}_agent_${i}`;
+    const variantId = packetVariant(exp.variants.map((variant) => variant.id), i - 1, opts);
+    const scenario = packetScenario(exp, i - 1);
+    const variantPacketAppUrl = packetAppUrlForVariant(exp, plan, packetAppUrl, variantId);
+    const url = buildAgentUrl(variantPacketAppUrl, experimentId, agentId, variantId);
+    const base = `agent-${i}`;
+    const promptFile = path.join(packetDir, `${base}.prompt.txt`);
+    const policyFile = path.join(packetDir, `${base}.policy.json`);
+    const schemaFile = path.join(packetDir, `${base}.report.schema.json`);
+    const urlFile = path.join(packetDir, `${base}.url.txt`);
+    await fs.writeFile(promptFile, packetPrompt(exp, scenario));
+    await fs.writeFile(urlFile, url + '\n');
+    await fs.writeFile(
+      policyFile,
+      JSON.stringify(
+        {
+          browser: opts.browser,
+          synthetic_variant: variantId ?? null,
+          may_read_source: false,
+          may_read_env: false,
+          may_modify_files: false,
+          allowed_url: url,
+          scenario,
+          expected_events: scenarioExpectedEvents(exp, scenario),
+          browser_context: plan.browser_context,
+        },
+        null,
+        2,
+      ) + '\n',
+    );
+    await fs.writeFile(schemaFile, JSON.stringify(preflightReportSchema, null, 2) + '\n');
+    agents.push({
+      agent_id: agentId,
+      browser: opts.browser,
+      url_file: path.relative(root, urlFile),
+      prompt_file: path.relative(root, promptFile),
+      report_schema_file: path.relative(root, schemaFile),
+      policy_file: path.relative(root, policyFile),
+      variant_id: variantId,
+    });
+  }
+
+  const warnings = [];
+  if (opts.forceVariant) {
+    warnings.push({
+      code: 'FORCED_VARIANT_TEST_MODE',
+      message: 'Packet URLs force one variant. Use this only for instrumentation testing.',
+    });
+  } else if (opts.balanceVariants !== false) {
+    warnings.push({
+      code: 'BALANCED_SYNTHETIC_VARIANTS',
+      message:
+        'Packet URLs force round-robin variants so synthetic traffic can exercise every branch. This is browser-agent test traffic only.',
+    });
+  }
+  warnings.push({
+    code: 'EVENT_WINDOW_START',
+    message:
+      'Only events emitted at or after this preflight prepare time are included by growth preflight pull. Earlier instrumentation-test events are intentionally excluded.',
+  });
+  if (packetAppUrl !== appUrl) {
+    warnings.push({
+      code: 'TARGET_ROUTE_APPLIED',
+      message: `Packet URLs use ${packetAppUrl} based on the experiment preflight target route.`,
+    });
+  }
+  if (!opts.appUrl && !opts.baseUrl) {
+    warnings.push({
+      code: 'APP_URL_RESOLVED',
+      message: `Using ${packetAppUrl} for packet URLs. Override with --app-url or --base-url when your dev server uses a different URL.`,
+    });
+  }
+  if (exp.variants.some((variant) => variant.implementation?.app_url)) {
+    warnings.push({
+      code: 'VARIANT_IMPLEMENTATION_URLS',
+      message:
+        'One or more packet URLs may use variant implementation app_url metadata instead of the default packet app URL.',
+    });
+  }
+  if (plan.browser_context.requires_authenticated_session) {
+    warnings.push({
+      code: 'AUTHENTICATED_BROWSER_CONTEXT',
+      message:
+        'Experiment targeting indicates an authenticated browser context. Run packets with an authenticated test session and report login/paywall blockers explicitly.',
+    });
+  }
+
+  const createdAt = new Date().toISOString();
+  const run: GrowthRun = {
+    id: runId,
+    type: 'preflight',
+    experiment_id: experimentId,
+    status: 'prepared',
+    created_at: createdAt,
+    event_window: openEventWindow(createdAt),
+    agents,
+    artifacts: {
+      run_dir: path.relative(root, runDir),
+      launch_manual: path.relative(root, path.join(runDir, 'launch.manual.md')),
+    },
+    warnings,
+  };
+  const eventWindowAfter = run.event_window?.after ?? run.created_at;
+  await fs.writeFile(path.join(runDir, 'run.json'), JSON.stringify(run, null, 2) + '\n');
+  await fs.writeFile(path.join(runDir, 'launch.manual.md'), launchManual(run));
+  const afterPacketExecution = nextAfterPacketExecution(run, plan);
+  return {
+    data: {
+      run,
+      run_id: run.id,
+      app_url: appUrl,
+      packet_app_url: packetAppUrl,
+      preflight_plan: plan,
+      framework_hint: { detected: framework, advisory_only: true },
+    },
+    humanText: `Prepared preflight ${runId} with ${agents.length} agent packet(s).`,
+    warnings: run.warnings,
+    nextSteps: [
+      `Packet app URL: ${packetAppUrl}. Override future runs with --app-url or --base-url.`,
+      `Open ${path.relative(root, path.join(runDir, 'launch.manual.md'))}.`,
+      `Events before ${eventWindowAfter} will not be included in preflight pulls.`,
+      `Attach reports with growth preflight attach-report ${runId} --agent <n> --file <report.json> --json.`,
+      ...afterPacketExecution.nextSteps,
+    ],
+    next: afterPacketExecution.next,
+  };
+}
+
+function packetAppUrlForVariant(
+  exp: Experiment,
+  plan: PreflightPlan,
+  defaultPacketAppUrl: string,
+  variantId?: string,
+): string {
+  const implementationUrl = variantId
+    ? exp.variants.find((variant) => variant.id === variantId)?.implementation?.app_url
+    : undefined;
+  return implementationUrl ? withStartPath(implementationUrl, plan.target_route) : defaultPacketAppUrl;
+}
+
+function nextAfterPacketExecution(run: GrowthRun, plan: Awaited<ReturnType<typeof resolvePreflightPlan>>) {
+  if (plan.readiness.blocked.length && plan.evidence.preferred_evidence !== 'local_jsonl') {
+    return {
+      nextSteps: [plan.next_command],
+      next: {
+        command: plan.next_command,
+        until: 'blocked evidence setup is resolved',
+      },
+    };
+  }
+  if (plan.evidence.preferred_evidence === 'posthog') {
+    return {
+      nextSteps: [
+        `Complete with growth preflight complete ${run.id} --json after reports are attached.`,
+        'Growth will then pull provider-backed synthetic events before audit.',
+      ],
+      next: {
+        command: `growth preflight complete ${run.id} --json`,
+        until: 'browser-agent reports are attached and provider-backed events can be pulled',
+      },
+    };
+  }
+  return {
+    nextSteps: [
+      `If browser execution writes local JSONL, complete in one step with growth preflight complete-local ${run.id} --events-file <events.jsonl> --json.`,
+      `Otherwise attach reports and complete with growth preflight complete ${run.id} --json.`,
+    ],
+    next: {
+      command: `growth preflight complete-local ${run.id} --events-file <events.jsonl> --json`,
+      until: 'synthetic browser events are attached and local launch-readiness audit is written',
+    },
+  };
+}
+
 async function nextAfterAudit(root: string, run: GrowthRun, audit: PreflightAudit) {
   if (audit.recommendation === 'provider_preflight_passed') {
     return {
@@ -576,6 +749,14 @@ async function nextAfterAudit(root: string, run: GrowthRun, audit: PreflightAudi
     command: `growth preflight audit ${run.id} --json`,
     until: `recommendation is not ${audit.recommendation}`,
   };
+}
+
+function preferredPullSource(connectors: Awaited<ReturnType<typeof listConnectors>>): string | undefined {
+  return (
+    connectors.find((connector) => connector.source !== 'local' && connector.kind !== 'native-app')?.source ??
+    connectors.find((connector) => connector.source === 'local')?.source ??
+    connectors[0]?.source
+  );
 }
 
 function timestampId(): string {

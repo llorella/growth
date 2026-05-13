@@ -1,10 +1,14 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { Experiment } from '../domain/types.js';
-import { readEnvValue, readLocalEnv } from '../lib/env-files.js';
+import { readLocalEnv } from '../lib/env-files.js';
 import { defaultAppUrlForFramework } from '../lib/app-url.js';
-import { connectorApiKeyEnv } from '../lib/connector-catalog.js';
 import { assertCoverage, type ConnectorConfig } from '../lib/connectors.js';
+import { postHogCapabilityStatus, type PostHogCapabilityStatus } from '../lib/posthog-capabilities.js';
+import {
+  preflightCoverage,
+  scenarioExpectedEvents as coverageScenarioExpectedEvents,
+} from './coverage.js';
 
 export type EvidenceSource = 'posthog' | 'local_jsonl';
 export type ReadinessTier =
@@ -21,13 +25,18 @@ export interface EvidencePlan {
     source: string;
     kind: ConnectorConfig['kind'];
     provider_backed: boolean;
-    auth_ready?: boolean;
+    telemetry_write_ready?: boolean;
+    provider_pull_ready?: boolean;
+    capabilities?: PostHogCapabilityStatus['capabilities'];
     coverage_ready?: boolean;
   }>;
   blocked_sources: Array<{
     source: EvidenceSource | string;
+    capability?: 'provider_pull' | 'connector_coverage';
     reason: string;
+    missing?: string[];
     next_command?: string;
+    manual_input_required?: boolean;
   }>;
   fallbacks: EvidenceSource[];
   readiness_ceiling: ReadinessTier;
@@ -39,6 +48,12 @@ export interface PreflightPlan {
   target_route: string;
   app_url: string;
   packet_app_url: string;
+  browser_context: {
+    requires_authenticated_session: boolean;
+    evidence: string[];
+    requirements: string[];
+    blocker_report_fields: string[];
+  };
   variant_strategy: 'round_robin_for_synthetic_coverage';
   scenario_expected_events: Array<{
     id: string;
@@ -46,6 +61,15 @@ export interface PreflightPlan {
   }>;
   run_required_events: string[];
   guardrail_events: string[];
+  variant_implementations: Array<{
+    variant_id: string;
+    status?: string;
+    branch?: string;
+    worktree_path?: string;
+    commit?: string;
+    pr_url?: string;
+    app_url?: string;
+  }>;
   evidence: EvidencePlan;
   readiness: {
     current: ReadinessTier;
@@ -76,10 +100,12 @@ export async function resolvePreflightPlan(opts: {
     target_route: targetRoute,
     app_url: appUrl,
     packet_app_url: packetAppUrl,
+    browser_context: browserContextPlan(opts.experiment),
     variant_strategy: 'round_robin_for_synthetic_coverage',
     scenario_expected_events: scenarioExpectedEvents(opts.experiment),
     run_required_events: requiredEvents(opts.experiment),
     guardrail_events: guardrailEvents(opts.experiment),
+    variant_implementations: variantImplementations(opts.experiment),
     evidence,
     readiness: {
       current: evidence.blocked_sources.length ? 'blocked' : 'static_ready',
@@ -88,6 +114,13 @@ export async function resolvePreflightPlan(opts: {
     },
     next_command: evidence.next_command,
   };
+}
+
+function variantImplementations(exp: Experiment): PreflightPlan['variant_implementations'] {
+  return exp.variants.map((variant) => ({
+    variant_id: variant.id,
+    ...(variant.implementation ?? {}),
+  }));
 }
 
 export async function resolveEvidencePlan(opts: {
@@ -100,33 +133,48 @@ export async function resolveEvidencePlan(opts: {
   const local = opts.connectors.find((connector) => connector.source === 'local' || connector.kind === 'native-app');
   const providerDiscoverable = await detectPostHogConventions(opts.root);
   const availableSources = await Promise.all(
-    opts.connectors.map(async (connector) => ({
-      source: connector.source,
-      kind: connector.kind,
-      provider_backed: connector.kind !== 'native-app',
-      auth_ready: connector.kind === 'posthog' ? await postHogAuthReady(opts.root, connector) : true,
-      coverage_ready: connectorCovers(opts.experiment, connector),
-    })),
+    opts.connectors.map(async (connector) => {
+      const capabilities = connector.kind === 'posthog' ? await postHogCapabilityStatus(opts.root, connector) : undefined;
+      return {
+        source: connector.source,
+        kind: connector.kind,
+        provider_backed: connector.kind !== 'native-app',
+        ...(capabilities
+          ? {
+              telemetry_write_ready: capabilities.capabilities.telemetry_write.ready,
+              provider_pull_ready: capabilities.capabilities.provider_pull.ready,
+              capabilities: capabilities.capabilities,
+            }
+          : {}),
+        coverage_ready: connectorCovers(opts.experiment, connector),
+      };
+    }),
   );
 
   if (provider) {
-    const authReady = await postHogAuthReady(opts.root, provider);
+    const capabilities = await postHogCapabilityStatus(opts.root, provider);
+    const providerPull = capabilities.capabilities.provider_pull;
     const coverageReady = connectorCovers(opts.experiment, provider);
-    if (!authReady) {
+    if (!providerPull.ready) {
       return {
         preferred_evidence: 'posthog',
-        why: 'A PostHog connector is configured, but provider auth is not ready.',
+        why: capabilities.capabilities.telemetry_write.ready
+          ? 'PostHog app telemetry is configured, but provider-backed evidence pull is not ready.'
+          : 'A PostHog connector is configured, but telemetry and provider-backed evidence are not ready.',
         available_sources: availableSources,
         blocked_sources: [
           {
             source: provider.source,
-            reason: `${provider.source} auth is not configured or required env is missing.`,
-            next_command: `growth connector auth check ${provider.source} --json`,
+            capability: 'provider_pull',
+            reason: providerPullBlockReason(provider.source, capabilities),
+            missing: providerPull.missing,
+            next_command: `growth connector auth setup ${provider.source} --json`,
+            manual_input_required: true,
           },
         ],
         fallbacks: local ? ['local_jsonl'] : [],
         readiness_ceiling: local ? 'local_synthetic_ready' : 'blocked',
-        next_command: `growth connector auth check ${provider.source} --json`,
+        next_command: `growth connector auth setup ${provider.source} --json`,
       };
     }
     if (!coverageReady) {
@@ -137,6 +185,7 @@ export async function resolveEvidencePlan(opts: {
         blocked_sources: [
           {
             source: provider.source,
+            capability: 'connector_coverage',
             reason: `${provider.source} mappings do not cover every event required by this experiment.`,
             next_command: `growth connector validate ${provider.source} --json`,
           },
@@ -153,7 +202,7 @@ export async function resolveEvidencePlan(opts: {
       blocked_sources: [],
       fallbacks: local ? ['local_jsonl'] : [],
       readiness_ceiling: 'provider_preflight_passed',
-      next_command: `growth preflight prepare ${opts.experiment.id} --agents 4 --browser --app-url ${opts.packetAppUrl} --json`,
+      next_command: `growth preflight run ${opts.experiment.id} --agents 4 --browser --app-url ${opts.packetAppUrl} --json`,
     };
   }
 
@@ -183,7 +232,7 @@ export async function resolveEvidencePlan(opts: {
       blocked_sources: [],
       fallbacks: [],
       readiness_ceiling: 'local_synthetic_ready',
-      next_command: `growth preflight prepare ${opts.experiment.id} --agents 4 --browser --app-url ${opts.packetAppUrl} --json`,
+      next_command: `growth preflight run ${opts.experiment.id} --agents 4 --browser --app-url ${opts.packetAppUrl} --json`,
     };
   }
 
@@ -206,10 +255,41 @@ export async function resolveEvidencePlan(opts: {
 
 export function chooseTargetRoute(exp: Experiment): string {
   const domain = exp.targeting?.domains?.find((value) => value.startsWith('/'));
-  return domain || '/';
+  if (domain) return domain;
+  return routeFromScenarios(exp) ?? '/';
 }
 
-function withStartPath(appUrl: string, startPath: string): string {
+function browserContextPlan(exp: Experiment): PreflightPlan['browser_context'] {
+  const evidence = authenticatedTargetingEvidence(exp);
+  const requiresAuthenticatedSession = evidence.length > 0;
+  return {
+    requires_authenticated_session: requiresAuthenticatedSession,
+    evidence,
+    requirements: requiresAuthenticatedSession
+      ? [
+          'Run browser packets with an authenticated test session that can access the target route.',
+          'Preserve synthetic query params through login, auth redirects, and route guards.',
+          'If the packet stops at login or a paywall, report the blocker instead of treating the instrumentation contract as verified.',
+        ]
+      : [],
+    blocker_report_fields: ['auth_or_payment_blockers', 'blockers'],
+  };
+}
+
+function authenticatedTargetingEvidence(exp: Experiment): string[] {
+  const evidence: string[] = [];
+  const authPattern = /\b(authenticated|logged[- ]?in|signed[- ]?in|session user|session\.user|user_id|user\.id)\b/i;
+  for (const segment of exp.targeting?.segments ?? []) {
+    if (authPattern.test(segment)) evidence.push(`targeting.segments:${segment}`);
+  }
+  for (const rule of exp.targeting?.rules ?? []) {
+    const text = `${rule.field} ${String(rule.value)}`;
+    if (authPattern.test(text)) evidence.push(`targeting.rules:${text}`);
+  }
+  return evidence;
+}
+
+export function withStartPath(appUrl: string, startPath: string): string {
   const url = new URL(appUrl);
   if ((url.pathname === '' || url.pathname === '/') && startPath !== '/') {
     url.pathname = startPath;
@@ -217,10 +297,28 @@ function withStartPath(appUrl: string, startPath: string): string {
   return url.toString().replace(/\/$/, url.pathname === '/' ? '/' : '');
 }
 
+function routeFromScenarios(exp: Experiment): string | null {
+  for (const scenario of exp.preflight?.scenarios ?? []) {
+    const text = [scenario.goal, ...(scenario.instructions ?? [])].join('\n');
+    const route = firstRouteMention(text);
+    if (route) return route;
+  }
+  return null;
+}
+
+function firstRouteMention(text: string): string | null {
+  const matches = text.matchAll(/(^|[\s([{"'`])(?<route>\/[a-zA-Z0-9][a-zA-Z0-9/_-]*)(?=$|[\s).,!?:;"'`}])/g);
+  for (const match of matches) {
+    const route = match.groups?.route;
+    if (route && !route.includes('//')) return route;
+  }
+  return null;
+}
+
 function scenarioExpectedEvents(exp: Experiment): PreflightPlan['scenario_expected_events'] {
-  return (exp.preflight?.scenarios ?? []).map((scenario) => ({
+  return preflightCoverage(exp).scenarios.map((scenario) => ({
     id: scenario.id,
-    expected_events: scenario.expected_events ?? requiredEvents(exp),
+    expected_events: coverageScenarioExpectedEvents(exp, scenario),
   }));
 }
 
@@ -247,16 +345,11 @@ function connectorCovers(exp: Experiment, connector: ConnectorConfig): boolean {
   }
 }
 
-async function postHogAuthReady(root: string, connector: ConnectorConfig): Promise<boolean> {
-  if (connector.kind !== 'posthog') return true;
-  const apiKeyEnv = connectorApiKeyEnv(connector);
-  const projectId = connector.posthog?.project_id;
-  const apiKeyPresent = apiKeyEnv ? !!(await readEnvValue(root, apiKeyEnv)) : true;
-  const projectIdPresent =
-    projectId === undefined ||
-    typeof projectId === 'number' ||
-    (typeof projectId === 'string' && (!isEnvReference(projectId) || !!(await readEnvValue(root, projectId))));
-  return apiKeyPresent && projectIdPresent;
+function providerPullBlockReason(source: string, status: PostHogCapabilityStatus): string {
+  if (status.capabilities.telemetry_write.ready && status.capabilities.provider_pull.missing.length === 1) {
+    return `${source} app telemetry is configured, but provider-backed preflight needs a PostHog project id to pull synthetic events.`;
+  }
+  return `${source} provider-backed preflight is blocked because required read-side values are missing: ${status.capabilities.provider_pull.missing.join(', ')}.`;
 }
 
 async function detectPostHogConventions(root: string): Promise<boolean> {
@@ -285,8 +378,4 @@ async function fileContains(root: string, rel: string, needle: string): Promise<
   } catch {
     return false;
   }
-}
-
-function isEnvReference(value: string): boolean {
-  return /^[A-Z_][A-Z0-9_]*$/.test(value);
 }

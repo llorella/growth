@@ -112,7 +112,15 @@ Plan and verify instrumentation before running a preflight:
 ```sh
 growth instrumentation plan onboarding-flow --json
 growth instrumentation verify onboarding-flow --json
-growth preflight prepare onboarding-flow --agents 4 --browser --json
+growth preflight plan onboarding-flow --json
+growth preflight run onboarding-flow --agents 4 --browser --json
+```
+
+When a variant has a concrete code artifact, record it on the experiment instead
+of leaving it in notes:
+
+```sh
+growth experiment implementation set onboarding-flow --variant treatment --branch exp/onboarding-treatment --worktree ../aptny-treatment --json
 ```
 
 For local JSONL validation, add a local connector and complete the preflight from
@@ -135,10 +143,16 @@ For provider-backed analysis, configure a connector, pull events, and analyze:
 ```sh
 growth connector add posthog --json
 growth connector auth check posthog --json
+growth connector auth setup posthog --json
 growth connector validate posthog --json
 growth pull onboarding-flow --source posthog --after <iso> --json
 growth analyze onboarding-flow --segment real-users --json
 ```
+
+For PostHog, app telemetry readiness and provider-pull readiness are separate.
+The analytics key and host can configure app telemetry, while provider-backed
+preflight/pull also needs a project id so Growth can read events back from
+PostHog.
 
 ## Commands
 

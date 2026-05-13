@@ -34,6 +34,7 @@ export async function resolveAppUrl(root: string, framework: FrameworkId | strin
     }));
     return explicit;
   }
+  if (process.env.PORTLESS_URL) return process.env.PORTLESS_URL;
   const local = await readLocal(root);
   return local.local_servers?.app_url ?? defaultAppUrlForFramework(framework);
 }

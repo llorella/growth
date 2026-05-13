@@ -29,10 +29,14 @@ Rules:
 - Do not read \`.env*\`.
 - Do not hand-edit \`.growth/state.json\`, \`.growth/audit.jsonl\`, or \`.growth/data/*\`.
 - Use \`growth schema experiment --json\` before creating experiment configs.
+- Use \`growth experiment implementation set <id> --variant <variant_id> ... --json\` when a variant has a concrete branch, worktree, PR, commit, or app URL.
 - Use \`growth instrumentation plan <id> --json\` before editing app code.
 - Use \`growth instrumentation verify <id> --json\` after editing app code.
 - Use \`growth preflight plan <id> --json\` after instrumentation verification.
+- Prefer \`growth preflight run <id> --json\` when Growth returns it; it will stop on blockers before preparing packets.
+- Follow \`preflight plan.browser_context\`; if it requires an authenticated session, use one and report login/paywall blockers explicitly.
 - Do not choose evidence source, connector, app URL, or readiness semantics yourself unless Growth asks.
+- Resolve provider-pull blockers only through Growth commands; do not read env files or call analytics provider APIs directly.
 - Prefer the growth MCP server when available; otherwise use \`growth ... --json\`.
 - Use the next command Growth returns; do not jump directly to local JSONL unless the plan selects it.
 - Use \`growth pull\` and \`growth analyze\`; do not rely on raw analytics screenshots.
@@ -152,24 +156,26 @@ const WORKFLOWS: Record<string, string> = {
 5. If client-side navigation is present, persist preflight query params to sessionStorage before navigation.
 6. Run \`growth instrumentation verify <id> --json\`.
 7. Run \`growth preflight plan <id> --json\`.
-8. Follow the next command returned by Growth; do not choose provider vs local evidence yourself.
+8. Follow the next command returned by Growth; use \`growth preflight run <id> --json\` when offered and do not choose provider vs local evidence yourself.
 `,
   'run-preflight.md': `# Run Preflight
 
 1. Run \`growth preflight plan <id> --json\`.
 2. Follow the returned \`_next.command\`.
-3. If Growth prepares packets, note \`event_window.after\`; events before that timestamp are intentionally excluded from \`growth preflight pull\`.
-4. Launch each generated packet with the available browser runner.
-5. Attach reports with \`growth preflight attach-report <run_id> --agent <n> --file <report.json> --json\`.
-6. Complete with \`growth preflight complete <run_id> --json\`.
-7. Pull and audit using the source selected by Growth.
+3. If \`browser_context.requires_authenticated_session=true\`, use an authenticated browser session for packet execution and report login/paywall blockers explicitly.
+4. If Growth prepares packets, note \`event_window.after\`; events before that timestamp are intentionally excluded from \`growth preflight pull\`.
+5. Launch each generated packet with the available browser runner.
+6. Attach reports with \`growth preflight attach-report <run_id> --agent <n> --file <report.json> --json\`.
+7. Complete with \`growth preflight complete <run_id> --json\`.
+8. Pull and audit using the source selected by Growth.
 `,
   'pull-and-analyze.md': `# Pull And Analyze
 
 1. Run \`growth connector auth check posthog --json\`.
-2. Run \`growth pull <id> --source posthog --after <iso> --json\`.
-3. Run \`growth analyze <id> --segment real-users --json\`.
-4. For synthetic traffic, run \`growth analyze <id> --segment agent-generated --json\`.
+2. If provider pull is blocked, run the returned \`growth connector auth setup posthog --json\` command and follow only Growth's safe setup commands.
+3. Run \`growth pull <id> --source posthog --after <iso> --json\`.
+4. Run \`growth analyze <id> --segment real-users --json\`.
+5. For synthetic traffic, run \`growth analyze <id> --segment agent-generated --json\`.
 `,
   'cleanup-experiment.md': `# Cleanup Experiment
 

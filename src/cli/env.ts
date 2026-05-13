@@ -63,6 +63,9 @@ export function registerEnv(program: Command, ctx: RunCtx): void {
         if (value === undefined) {
           throw new GrowthError('missing_source_env', `${opts.fromEnv} is not present in the current process environment.`);
         }
+        if (value.length === 0) {
+          throw new GrowthError('empty_env_value', 'Environment values must be non-empty.');
+        }
         const file = path.resolve(ctx.getRoot(), opts.file);
         const changed = await upsertEnv(file, opts.key, value);
         return {

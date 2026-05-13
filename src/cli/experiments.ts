@@ -6,7 +6,7 @@ import { Store } from '../lib/store.js';
 import { GrowthError } from '../lib/envelope.js';
 import { applyTemplate } from '../domain/builder.js';
 import { requiredSampleSize } from '../domain/stats.js';
-import type { Experiment } from '../domain/types.js';
+import type { Experiment, VariantImplementation } from '../domain/types.js';
 
 interface CreateFlags {
   template?: string;
@@ -19,6 +19,19 @@ interface CreateFlags {
   mde?: number;
   maxDays?: number;
 }
+
+interface VariantImplementationFlags {
+  variant: string;
+  status?: string;
+  branch?: string;
+  worktree?: string;
+  commit?: string;
+  prUrl?: string;
+  appUrl?: string;
+}
+
+const IMPLEMENTATION_STATUSES = ['planned', 'in_progress', 'ready', 'merged', 'abandoned'] as const;
+type ImplementationStatus = (typeof IMPLEMENTATION_STATUSES)[number];
 
 async function buildFromFlags(store: Store, id: string, flags: CreateFlags): Promise<Experiment> {
   const haveSource = !!(flags.template || flags.fromFile || flags.fromJson);
@@ -65,6 +78,24 @@ async function buildFromFlags(store: Store, id: string, flags: CreateFlags): Pro
   });
 }
 
+function implementationFromFlags(flags: VariantImplementationFlags): VariantImplementation {
+  const metadata: VariantImplementation = {};
+  if (flags.status !== undefined) {
+    if (!IMPLEMENTATION_STATUSES.includes(flags.status as ImplementationStatus)) {
+      throw new GrowthError('invalid_implementation_status', `Unsupported implementation status "${flags.status}".`, {
+        supported: [...IMPLEMENTATION_STATUSES],
+      });
+    }
+    metadata.status = flags.status as ImplementationStatus;
+  }
+  if (flags.branch !== undefined) metadata.branch = flags.branch;
+  if (flags.worktree !== undefined) metadata.worktree_path = flags.worktree;
+  if (flags.commit !== undefined) metadata.commit = flags.commit;
+  if (flags.prUrl !== undefined) metadata.pr_url = flags.prUrl;
+  if (flags.appUrl !== undefined) metadata.app_url = flags.appUrl;
+  return metadata;
+}
+
 export function registerExperiments(program: Command, ctx: RunCtx): void {
   const experiment = program
     .command('experiment')
@@ -99,12 +130,62 @@ export function registerExperiments(program: Command, ctx: RunCtx): void {
           nextSteps: [
             `growth experiment show ${exp.id} --json`,
             `growth instrumentation plan ${exp.id} --json`,
-            `growth preflight prepare ${exp.id} --agents 4 --browser --json`,
+            `growth preflight run ${exp.id} --agents 4 --browser --json`,
           ],
           next: {
             command: `growth instrumentation plan ${exp.id} --json`,
             until: 'instrumentation contract is ready for implementation',
           },
+        };
+      });
+    });
+
+  experiment
+    .command('implementation')
+    .description('Manage concrete variant implementation metadata.')
+    .command('set <id>')
+    .requiredOption('--variant <id>', 'Variant id to annotate.')
+    .option('--status <status>', 'planned, in_progress, ready, merged, or abandoned.')
+    .option('--branch <name>', 'Git branch containing this variant implementation.')
+    .option('--worktree <path>', 'Worktree path containing this variant implementation.')
+    .option('--commit <sha>', 'Commit SHA for this variant implementation.')
+    .option('--pr-url <url>', 'Pull request URL for this variant implementation.')
+    .option('--app-url <url>', 'Browser URL for this variant implementation.')
+    .action(async (id: string, opts: VariantImplementationFlags) => {
+      await wrap('growth experiment implementation set', ctx, async () => {
+        await requireInitialized(ctx.getRoot());
+        const store = new Store(ctx.getRoot());
+        const exp = await store.getExperiment(id);
+        if (!exp) throw new GrowthError('not_found', `Experiment "${id}" not found.`);
+        const variantIndex = exp.variants.findIndex((variant) => variant.id === opts.variant);
+        if (variantIndex < 0) {
+          throw new GrowthError('variant_not_found', `Variant "${opts.variant}" is not part of ${id}.`, {
+            variants: exp.variants.map((variant) => variant.id),
+          });
+        }
+        const metadata = implementationFromFlags(opts);
+        if (Object.keys(metadata).length === 0) {
+          throw new GrowthError('missing_implementation_metadata', 'Provide at least one implementation metadata option.');
+        }
+        exp.variants[variantIndex] = {
+          ...exp.variants[variantIndex],
+          implementation: {
+            ...(exp.variants[variantIndex].implementation ?? {}),
+            ...metadata,
+          },
+        };
+        exp.updated_at = new Date().toISOString();
+        await store.saveExperiment(exp);
+        return {
+          data: {
+            experiment: exp,
+            variant: exp.variants[variantIndex],
+          },
+          humanText: `Updated implementation metadata for ${id}/${opts.variant}.`,
+          nextSteps: [
+            `growth experiment show ${id} --json`,
+            `growth preflight plan ${id} --json`,
+          ],
         };
       });
     });

@@ -52,6 +52,8 @@ export function registerInstrumentation(program: Command, ctx: RunCtx): void {
         const connectors = await listConnectors(ctx.getRoot());
         const appUrl = await resolveAppUrl(ctx.getRoot(), framework);
         const spaAgentContext = await scanSpaAgentContext(ctx.getRoot());
+        const assignmentIdentity = assignmentIdentityGuidance(exp);
+        const variantIntegrity = variantIntegrityGuidance(exp);
         return {
           data: {
             framework,
@@ -59,11 +61,13 @@ export function registerInstrumentation(program: Command, ctx: RunCtx): void {
             app_url: appUrl,
             experiment_id: exp.id,
             required_contract: contract,
+            assignment_identity: assignmentIdentity,
+            variant_integrity: variantIntegrity,
             candidate_files: suggestedFiles,
             suggested_files: suggestedFiles,
             connector_event_shapes: connectors.map(connectorEventShape),
             preflight_query_params: SYNTHETIC_TRAFFIC_QUERY_PARAMS,
-            known_pitfalls: knownPitfalls(spaAgentContext),
+            known_pitfalls: knownPitfalls(spaAgentContext, exp),
             reference_implementation: referenceImplementation(framework),
             prompt_packet: {
               summary: `Instrument ${exp.id} so assignments are stable and all required events include the growth properties.`,
@@ -71,8 +75,15 @@ export function registerInstrumentation(program: Command, ctx: RunCtx): void {
                 'Inspect the repository and follow existing app conventions before choosing files to edit.',
                 'Read preflight query params before implementing assignment.',
                 'If the app uses client-side navigation, persist synthetic query params to sessionStorage before navigation strips the query string.',
+                ...(assignmentIdentity.evidence.length
+                  ? ['On authenticated routes, capture synthetic query params before auth redirects or route guards can strip them.']
+                  : []),
+                'Preserve the control variant behavior and copy except for instrumentation needed to measure the experiment.',
                 'Emit events in the shape expected by the active connector paths.',
                 'Persist assignment and per-event idempotency keys so rerenders do not duplicate events.',
+                ...(assignmentIdentity.status === 'review'
+                  ? ['Use user_id for stable assignment on authenticated surfaces unless the experiment has an explicit cross-device reason not to.']
+                  : []),
               ],
               commands_after_editing: [
                 `growth instrumentation verify ${exp.id} --json`,
@@ -86,12 +97,13 @@ export function registerInstrumentation(program: Command, ctx: RunCtx): void {
             'Treat candidate_files and framework_hint as advisory; inspect the codebase before editing.',
             'Use connector_event_shapes from the JSON output when shaping app events.',
             `Run growth instrumentation verify ${exp.id} --json.`,
-            `Use growth preflight prepare ${exp.id} --agents 4 --browser --app-url ${appUrl} --json when ready.`,
+            `Use growth preflight run ${exp.id} --agents 4 --browser --app-url ${appUrl} --json when ready.`,
           ],
           next: {
             command: `growth instrumentation verify ${exp.id} --json`,
             until: 'app instrumentation has been edited and the static contract verifies',
           },
+          warnings: assignmentIdentity.status === 'review' ? [assignmentIdentity.warning] : [],
         };
       });
     });
@@ -217,6 +229,26 @@ export function registerInstrumentation(program: Command, ctx: RunCtx): void {
           framework,
           appUrl,
         });
+        const assignmentIdentity = assignmentIdentityGuidance(exp);
+        const variantIntegrity = variantIntegrityGuidance(exp);
+        if (plan.readiness.blocked.length) {
+          warnings.push({
+            code: 'PREFLIGHT_BLOCKED',
+            message: plan.readiness.blocked.join(' '),
+          });
+        }
+        if (assignmentIdentity.status === 'review') {
+          warnings.push(assignmentIdentity.warning);
+        }
+        const readyForPreflight = ok && plan.readiness.current !== 'blocked';
+        const readyForPreflightBasis = preflightReadinessBasis(readyForPreflight, readiness);
+        if (readyForPreflightBasis === 'static_contract') {
+          warnings.push({
+            code: 'STATIC_ONLY_PREFLIGHT_READINESS',
+            message:
+              'Static contract checks passed, but no app-emitted event evidence was verified. Continue through growth preflight plan/run; do not treat this as synthetic evidence.',
+          });
+        }
         const shouldPlanNext =
           !endpointCheck &&
           !actualEventCheck &&
@@ -227,6 +259,8 @@ export function registerInstrumentation(program: Command, ctx: RunCtx): void {
             framework,
             framework_hint: { detected: framework, advisory_only: true },
             required_events: requiredEvents(exp),
+            assignment_identity: assignmentIdentity,
+            variant_integrity: variantIntegrity,
             candidate_files: suggestedFiles,
             existing_suggested_files: existingSuggestedFiles,
             taxonomy_unlisted_events: taxonomyUnlistedEvents,
@@ -244,7 +278,10 @@ export function registerInstrumentation(program: Command, ctx: RunCtx): void {
               packet_app_url: plan.packet_app_url,
               next_command: plan.next_command,
             },
-            ready_for_preflight: ok,
+            ready_for_preflight: readyForPreflight,
+            ready_for_preflight_basis: readyForPreflightBasis,
+            static_ready_for_preflight: readyForPreflight && readiness.static_ready,
+            emitted_event_ready_for_preflight: readyForPreflight && readiness.local_synthetic_ready,
             ok,
           },
           warnings,
@@ -273,6 +310,14 @@ export function registerInstrumentation(program: Command, ctx: RunCtx): void {
         };
       });
     });
+}
+
+function preflightReadinessBasis(
+  readyForPreflight: boolean,
+  readiness: ReturnType<typeof readinessModel>,
+): 'blocked' | 'static_contract' | 'emitted_synthetic_events' {
+  if (!readyForPreflight) return 'blocked';
+  return readiness.local_synthetic_ready ? 'emitted_synthetic_events' : 'static_contract';
 }
 
 function readinessModel(opts: {
@@ -320,7 +365,132 @@ function buildContract(exp: Experiment) {
     agent_traffic: {
       required_properties: SYNTHETIC_TRAFFIC_REQUIRED_PROPERTIES,
       query_params: SYNTHETIC_TRAFFIC_QUERY_PARAMS,
+      synthetic_context: syntheticContextContract(exp),
     },
+  };
+}
+
+function syntheticContextContract(exp: Experiment) {
+  return {
+    storage: {
+      adapter: 'sessionStorage',
+      key: `growth.synthetic_context.${exp.id}`,
+    },
+    capture: {
+      source: 'url_query_params',
+      when: 'earliest_app_entrypoint_before_auth_redirects_or_client_navigation',
+      query_params: SYNTHETIC_TRAFFIC_QUERY_PARAMS.map((param) => param.name),
+    },
+    event_properties: [
+      {
+        query_param: SYNTHETIC_TRAFFIC_FIELDS.agentGenerated,
+        property: SYNTHETIC_TRAFFIC_FIELDS.agentGenerated,
+        type: 'boolean',
+        required_for_synthetic: true,
+      },
+      {
+        query_param: SYNTHETIC_TRAFFIC_FIELDS.agentRunId,
+        property: SYNTHETIC_TRAFFIC_FIELDS.agentRunId,
+        type: 'string',
+        required_for_synthetic: true,
+      },
+      {
+        query_param: SYNTHETIC_TRAFFIC_FIELDS.experimentId,
+        property: SYNTHETIC_TRAFFIC_FIELDS.experimentId,
+        type: 'string',
+        required_for_synthetic: true,
+      },
+      {
+        query_param: SYNTHETIC_TRAFFIC_FIELDS.forcedVariant,
+        property: SYNTHETIC_TRAFFIC_FIELDS.variantId,
+        type: 'string',
+        required_for_synthetic: true,
+        meaning: 'Forced synthetic packet branch. Use it as assignment override and emit variant_id.',
+      },
+    ],
+    reset_rule:
+      'Only replace stored synthetic context when agent_run_id changes or no stored context exists.',
+    propagation_rule:
+      'Attach stored synthetic context to every experiment event before connector-specific shaping.',
+  };
+}
+
+type AssignmentIdentityGuidance =
+  | {
+      stable_by: string;
+      recommended_stable_by: string;
+      status: 'ok';
+      reason: string;
+      evidence: string[];
+    }
+  | {
+      stable_by: string;
+      recommended_stable_by: string;
+      status: 'review';
+      reason: string;
+      evidence: string[];
+      warning: { code: string; message: string };
+    };
+
+function assignmentIdentityGuidance(exp: Experiment): AssignmentIdentityGuidance {
+  const stableBy = exp.instrumentation?.assignment?.stable_by ?? 'user_id';
+  const evidence = authenticatedTargetingEvidence(exp);
+  const authenticatedSurface = evidence.length > 0;
+  const userStableKey = isUserStableKey(stableBy);
+  if (authenticatedSurface && !userStableKey) {
+    const reason =
+      'Targeting indicates an authenticated surface, so assignment should normally be stable by user_id to avoid cross-device or cross-browser variant drift.';
+    return {
+      stable_by: stableBy,
+      recommended_stable_by: 'user_id',
+      status: 'review',
+      reason,
+      evidence,
+      warning: {
+        code: 'AUTHENTICATED_ASSIGNMENT_STABLE_BY',
+        message: `${reason} Current stable_by is "${stableBy}".`,
+      },
+    };
+  }
+  return {
+    stable_by: stableBy,
+    recommended_stable_by: authenticatedSurface ? 'user_id' : stableBy,
+    status: 'ok',
+    reason: authenticatedSurface
+      ? 'Targeting indicates an authenticated surface and assignment is stable by user identity.'
+      : 'No authenticated targeting signal was detected.',
+    evidence,
+  };
+}
+
+function authenticatedTargetingEvidence(exp: Experiment): string[] {
+  const evidence: string[] = [];
+  const authPattern = /\b(authenticated|logged[- ]?in|signed[- ]?in|session user|session\.user|user_id|user\.id)\b/i;
+  for (const segment of exp.targeting?.segments ?? []) {
+    if (authPattern.test(segment)) evidence.push(`targeting.segments:${segment}`);
+  }
+  for (const rule of exp.targeting?.rules ?? []) {
+    const text = `${rule.field} ${String(rule.value)}`;
+    if (authPattern.test(text)) evidence.push(`targeting.rules:${text}`);
+  }
+  return evidence;
+}
+
+function isUserStableKey(stableBy: string): boolean {
+  return /^(user_id|user\.id|session\.user\.id)$/.test(stableBy);
+}
+
+function variantIntegrityGuidance(exp: Experiment) {
+  const control = exp.variants[0];
+  return {
+    control_variant_id: control?.id ?? null,
+    treatment_variant_ids: exp.variants.slice(1).map((variant) => variant.id),
+    requirements: [
+      'Treat the first variant as the baseline control.',
+      'Preserve control behavior, layout, and copy except for shared instrumentation required to measure the experiment.',
+      'Keep treatment-only product changes behind assignment logic or concrete variant implementation metadata.',
+      'Emit the canonical assigned variant_id on every event so analysis can distinguish control from treatment.',
+    ],
   };
 }
 
@@ -366,6 +536,7 @@ function referenceImplementation(framework: string) {
       skill_reference: '.agents/skills/growth/references/nextjs-app-router.md',
       notes: [
         'Read URL params agent_generated, agent_run_id, experiment_id, and variant before hashing assignment.',
+        'Prefer one app-level synthetic context helper that captures, persists, and returns the synthetic context for event emitters.',
         'Persist synthetic query params to sessionStorage before Link/router navigation removes them.',
         'Only reset synthetic per-event dedupe when agent_run_id changes.',
         'Emit PostHog-style envelopes when using the local connector: { event, properties: { ... } }.',
@@ -379,6 +550,7 @@ function referenceImplementation(framework: string) {
       skill_reference: '.agents/skills/growth/references/spa-navigation.md',
       notes: [
         'React Router Link/NavLink/useNavigate calls do not preserve URL query params by default.',
+        'Prefer one app-level synthetic context helper that captures, persists, and returns the synthetic context for event emitters.',
         'Persist synthetic query params to sessionStorage on first page load and read from there on every event.',
         'Emit PostHog-style envelopes when using the local connector: { event, properties: { ... } }.',
         ...sharedNotes,
@@ -388,6 +560,7 @@ function referenceImplementation(framework: string) {
   return {
     advisory_only: true,
     notes: [
+      'Prefer one app-level synthetic context helper that captures, persists, and returns the synthetic context for event emitters.',
       'Persist assignment by stable id.',
       'Attach preflight query params to every synthetic event.',
       'Emit event payloads that match connector_event_shapes.',
@@ -404,7 +577,7 @@ interface InstrumentationPitfall {
   evidence?: unknown;
 }
 
-function knownPitfalls(spaAgentContext: SpaAgentContextScan): InstrumentationPitfall[] {
+function knownPitfalls(spaAgentContext: SpaAgentContextScan, exp: Experiment): InstrumentationPitfall[] {
   const pitfalls: InstrumentationPitfall[] = [
     {
       id: 'variant-field-duality',
@@ -414,6 +587,17 @@ function knownPitfalls(spaAgentContext: SpaAgentContextScan): InstrumentationPit
       fix: 'Emit properties.variant_id on every event; optionally emit properties.variant as an alias only for legacy connector compatibility.',
     },
   ];
+  const authenticatedEvidence = authenticatedTargetingEvidence(exp);
+  if (authenticatedEvidence.length) {
+    pitfalls.unshift({
+      id: 'auth-gated-synthetic-context',
+      applies_to: 'authenticated-targeting-detected',
+      message:
+        'Authenticated routes may redirect before the instrumented page or component reads ?agent_generated, ?agent_run_id, ?experiment_id, and ?variant.',
+      fix: 'Capture and persist synthetic query params at the earliest app entry point before auth redirects, route guards, or server/client navigation can strip them.',
+      evidence: authenticatedEvidence,
+    });
+  }
   if (spaAgentContext.uses_client_navigation) {
     pitfalls.unshift({
       id: 'spa-query-string-navigation',

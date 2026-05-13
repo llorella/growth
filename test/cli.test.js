@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -315,7 +315,31 @@ test('instrumentation plan uses custom events and root Next.js layout', () => {
       'experiment_id',
       'variant',
     ]);
+    assert.equal(plan.data.variant_integrity.control_variant_id, 'control');
+    assert.deepEqual(plan.data.variant_integrity.treatment_variant_ids, ['treatment']);
+    assert.equal(
+      plan.data.variant_integrity.requirements.some((requirement) => requirement.includes('Preserve control')),
+      true,
+    );
+    assert.equal(
+      plan.data.prompt_packet.rules.some((rule) => rule.includes('Preserve the control variant')),
+      true,
+    );
     assert.equal(plan.data.required_contract.assignment.stable_by, 'anonymous_id');
+    assert.equal(
+      plan.data.required_contract.agent_traffic.synthetic_context.storage.key,
+      'growth.synthetic_context.onboarding-flow',
+    );
+    assert.equal(
+      plan.data.required_contract.agent_traffic.synthetic_context.capture.when,
+      'earliest_app_entrypoint_before_auth_redirects_or_client_navigation',
+    );
+    assert.equal(
+      plan.data.required_contract.agent_traffic.synthetic_context.event_properties.some(
+        (property) => property.query_param === 'variant' && property.property === 'variant_id',
+      ),
+      true,
+    );
     const workspaceEvent = plan.data.required_contract.events.find((event) => event.event === 'workspace_created');
     assert.ok(workspaceEvent);
     assert.deepEqual(workspaceEvent.required_properties.includes('workspace_name_present'), true);
@@ -351,6 +375,75 @@ test('instrumentation plan uses custom events and root Next.js layout', () => {
       verify.warnings.some((warning) => warning.code === 'ACTUAL_EVENT_PROPERTY_MISSING'),
       true,
     );
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('instrumentation plan flags anonymous assignment on authenticated targeting', () => {
+  const root = tempRoot();
+  try {
+    run(root, ['init', '--json']);
+    const spec = {
+      id: 'auth-assignment',
+      name: 'Authenticated assignment test',
+      hypothesis:
+        'We believe clearer authenticated onboarding will improve completion because signed in users get a more relevant first step.',
+      status: 'draft',
+      variants: [
+        { id: 'control', name: 'Control', weight: 50 },
+        { id: 'treatment', name: 'Treatment', weight: 50 },
+      ],
+      metrics: [
+        {
+          id: 'completion_rate',
+          name: 'Completion rate',
+          role: 'primary',
+          type: 'proportion',
+          direction: 'higher_is_better',
+          event: 'onboarding_completed',
+          denominator_event: 'onboarding_started',
+        },
+      ],
+      targeting: {
+        segments: ['authenticated renters without a completed profile'],
+      },
+      sample_size: {
+        baseline_rate: 0.3,
+        minimum_detectable_effect: 0.15,
+        power: 0.8,
+        alpha: 0.05,
+      },
+      schedule: { max_duration_days: 30, min_runtime_days: 7 },
+      instrumentation: {
+        assignment: {
+          stable_by: 'anonymous_id',
+          properties: ['experiment_id', 'variant_id', 'anonymous_id'],
+        },
+      },
+    };
+    run(root, ['experiment', 'create', 'auth-assignment', '--from-json', JSON.stringify(spec), '--json']);
+
+    const plan = run(root, ['instrumentation', 'plan', 'auth-assignment', '--json']);
+    assert.equal(plan.data.assignment_identity.status, 'review');
+    assert.equal(plan.data.assignment_identity.recommended_stable_by, 'user_id');
+    assert.equal(plan.warnings[0].code, 'AUTHENTICATED_ASSIGNMENT_STABLE_BY');
+    assert.equal(
+      plan.data.known_pitfalls.some((pitfall) => pitfall.id === 'auth-gated-synthetic-context'),
+      true,
+    );
+    assert.equal(
+      plan.data.prompt_packet.rules.some((rule) => rule.includes('before auth redirects')),
+      true,
+    );
+    assert.equal(
+      plan.data.prompt_packet.rules.some((rule) => rule.includes('Use user_id for stable assignment')),
+      true,
+    );
+
+    const verify = run(root, ['instrumentation', 'verify', 'auth-assignment', '--json']);
+    assert.equal(verify.data.assignment_identity.status, 'review');
+    assert.equal(verify.warnings.some((warning) => warning.code === 'AUTHENTICATED_ASSIGNMENT_STABLE_BY'), true);
   } finally {
     cleanup(root);
   }
@@ -446,7 +539,7 @@ test('preflight plan prefers discoverable PostHog before local JSONL', () => {
       event: 'activation_completed',
       denominatorEvent: 'experiment_viewed',
     });
-    spec.targeting = { domains: ['/onboarding'] };
+    spec.targeting = { domains: ['/onboarding'], segments: ['authenticated renters'] };
     const specFile = path.join(root, 'spec.json');
     writeFileSync(specFile, JSON.stringify(spec));
     run(root, ['experiment', 'create', 'onboarding-plan', '--from-file', specFile, '--json']);
@@ -457,6 +550,12 @@ test('preflight plan prefers discoverable PostHog before local JSONL', () => {
     assert.equal(plan.data.plan.next_command, 'growth connector import stripe-projects --json');
     assert.equal(plan.data.plan.target_route, '/onboarding');
     assert.equal(plan.data.plan.packet_app_url, 'http://localhost:3000/onboarding');
+    assert.equal(plan.data.plan.browser_context.requires_authenticated_session, true);
+    assert.equal(
+      plan.data.plan.browser_context.requirements.some((requirement) => requirement.includes('authenticated test session')),
+      true,
+    );
+    assert.equal(plan.warnings.some((warning) => warning.code === 'AUTHENTICATED_BROWSER_CONTEXT'), true);
   } finally {
     cleanup(root);
   }
@@ -480,6 +579,7 @@ test('preflight plan uses provider-backed connector when PostHog is ready', () =
       [
         'POSTHOG_ANALYTICS_API_KEY=phc_test',
         'POSTHOG_ANALYTICS_HOST=https://us.posthog.com',
+        'POSTHOG_PROJECT_ID=123',
         '',
       ].join('\n'),
     );
@@ -488,9 +588,234 @@ test('preflight plan uses provider-backed connector when PostHog is ready', () =
     const plan = run(root, ['preflight', 'plan', 'provider-plan', '--json']);
     assert.equal(plan.data.plan.evidence.preferred_evidence, 'posthog');
     assert.equal(plan.data.plan.evidence.readiness_ceiling, 'provider_preflight_passed');
-    assert.match(plan.data.plan.next_command, /growth preflight prepare provider-plan/);
+    assert.match(plan.data.plan.next_command, /growth preflight run provider-plan/);
     assert.match(plan.data.plan.next_command, /--app-url http:\/\/localhost:3000\/onboarding/);
     assert.equal(plan.data.plan.readiness.ceiling, 'provider_preflight_passed');
+
+    const preflight = run(root, ['preflight', 'run', 'provider-plan', '--agents', '1', '--browser', '--json']);
+    assert.equal(preflight.data.status, 'prepared');
+    assert.equal(preflight.data.preflight_plan.evidence.preferred_evidence, 'posthog');
+    assert.match(preflight._next.command, /growth preflight complete /);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('variant implementation metadata is command-managed and appears in preflight plan', () => {
+  const root = tempRoot();
+  try {
+    run(root, ['init', '--json']);
+    const spec = genericSpec({
+      id: 'variant-impl',
+      event: 'activation_completed',
+      denominatorEvent: 'experiment_viewed',
+    });
+    const specFile = path.join(root, 'spec.json');
+    writeFileSync(specFile, JSON.stringify(spec));
+    run(root, ['experiment', 'create', 'variant-impl', '--from-file', specFile, '--json']);
+
+    const updated = run(root, [
+      'experiment',
+      'implementation',
+      'set',
+      'variant-impl',
+      '--variant',
+      'treatment',
+      '--status',
+      'ready',
+      '--branch',
+      'exp/onboarding-treatment',
+      '--worktree',
+      '../aptny-treatment',
+      '--commit',
+      'abc1234',
+      '--pr-url',
+      'https://example.com/pull/12',
+      '--app-url',
+      'https://treatment.aptny.localhost',
+      '--json',
+    ]);
+    const treatment = updated.data.variant;
+    assert.equal(treatment.id, 'treatment');
+    assert.equal(treatment.implementation.status, 'ready');
+    assert.equal(treatment.implementation.branch, 'exp/onboarding-treatment');
+
+    const plan = run(root, ['preflight', 'plan', 'variant-impl', '--json']);
+    const implementation = plan.data.plan.variant_implementations.find((item) => item.variant_id === 'treatment');
+    assert.equal(implementation.status, 'ready');
+    assert.equal(implementation.app_url, 'https://treatment.aptny.localhost');
+
+    run(root, ['connector', 'add', 'local', '--events-file', 'tmp/events.jsonl', '--json']);
+    const preflight = run(root, ['preflight', 'run', 'variant-impl', '--agents', '2', '--json']);
+    const packetDir = path.join(root, '.growth', 'runs', preflight.data.run.id, 'agent-packets');
+    const controlUrl = readFileSync(path.join(packetDir, 'agent-1.url.txt'), 'utf8').trim();
+    const treatmentUrl = readFileSync(path.join(packetDir, 'agent-2.url.txt'), 'utf8').trim();
+    assert.equal(new URL(controlUrl).origin, 'http://localhost:3000');
+    assert.equal(new URL(treatmentUrl).origin, 'https://treatment.aptny.localhost');
+    assert.equal(new URL(treatmentUrl).searchParams.get('variant'), 'treatment');
+    assert.equal(preflight.warnings.some((warning) => warning.code === 'VARIANT_IMPLEMENTATION_URLS'), true);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('instrumentation verify does not mark preflight ready when provider pull is blocked', () => {
+  const root = tempRoot();
+  try {
+    run(root, ['init', '--json']);
+    const spec = genericSpec({
+      id: 'blocked-provider',
+      event: 'activation_completed',
+      denominatorEvent: 'experiment_viewed',
+    });
+    const specFile = path.join(root, 'spec.json');
+    writeFileSync(specFile, JSON.stringify(spec));
+    run(root, ['experiment', 'create', 'blocked-provider', '--from-file', specFile, '--json']);
+    writeFileSync(
+      path.join(root, '.env'),
+      [
+        'POSTHOG_ANALYTICS_API_KEY=phc_test',
+        'POSTHOG_ANALYTICS_HOST=https://us.posthog.com',
+        '',
+      ].join('\n'),
+    );
+    run(root, ['connector', 'import', 'stripe-projects', '--json']);
+
+    const verify = run(root, ['instrumentation', 'verify', 'blocked-provider', '--json']);
+    assert.equal(verify.data.ok, true);
+    assert.equal(verify.data.ready_for_preflight, false);
+    assert.equal(verify.data.ready_for_preflight_basis, 'blocked');
+    assert.equal(verify.data.static_ready_for_preflight, false);
+    assert.equal(verify.data.emitted_event_ready_for_preflight, false);
+    assert.equal(verify.data.preflight_plan.readiness_ceiling, 'blocked');
+    assert.equal(verify.warnings.some((warning) => warning.code === 'PREFLIGHT_BLOCKED'), true);
+    assert.equal(verify._next.command, 'growth preflight plan blocked-provider --json');
+
+    const plan = run(root, ['preflight', 'plan', 'blocked-provider', '--json']);
+    assert.equal(plan.data.plan.next_command, 'growth connector auth setup posthog --json');
+    assert.equal(plan.data.plan.evidence.available_sources[0].telemetry_write_ready, true);
+    assert.equal(plan.data.plan.evidence.available_sources[0].provider_pull_ready, false);
+    assert.equal(plan.data.plan.evidence.blocked_sources[0].capability, 'provider_pull');
+    assert.equal(
+      plan.data.plan.evidence.blocked_sources[0].reason.includes('app telemetry is configured'),
+      true,
+    );
+    assert.equal(plan.data.plan.evidence.blocked_sources[0].manual_input_required, true);
+    assert.equal(plan._next.command, 'growth connector auth setup posthog --json');
+
+    const runsDir = path.join(root, '.growth', 'runs');
+    const runsBefore = existsSync(runsDir) ? readdirSync(runsDir).sort() : [];
+    const blockedRun = run(root, ['preflight', 'run', 'blocked-provider', '--json']);
+    assert.equal(blockedRun.data.status, 'blocked');
+    assert.equal(blockedRun.data.run, null);
+    assert.equal(blockedRun._next.command, 'growth connector auth setup posthog --json');
+    const runsAfter = existsSync(runsDir) ? readdirSync(runsDir).sort() : [];
+    assert.deepEqual(runsAfter, runsBefore);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('instrumentation verify distinguishes static readiness from emitted evidence', () => {
+  const root = tempRoot();
+  try {
+    run(root, ['init', '--json']);
+    const spec = genericSpec({
+      id: 'static-only',
+      event: 'activation_completed',
+      denominatorEvent: 'experiment_viewed',
+    });
+    const specFile = path.join(root, 'spec.json');
+    writeFileSync(specFile, JSON.stringify(spec));
+    run(root, ['experiment', 'create', 'static-only', '--from-file', specFile, '--json']);
+    run(root, ['connector', 'add', 'local', '--json']);
+
+    const verify = run(root, ['instrumentation', 'verify', 'static-only', '--json']);
+    assert.equal(verify.data.ok, true);
+    assert.equal(verify.data.ready_for_preflight, true);
+    assert.equal(verify.data.ready_for_preflight_basis, 'static_contract');
+    assert.equal(verify.data.static_ready_for_preflight, true);
+    assert.equal(verify.data.emitted_event_ready_for_preflight, false);
+    assert.equal(verify.data.actual_events_verified, false);
+    assert.equal(
+      verify.warnings.some((warning) => warning.code === 'STATIC_ONLY_PREFLIGHT_READINESS'),
+      true,
+    );
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('preflight prepare uses scenario route and keeps provider evidence as the next step', () => {
+  const root = tempRoot();
+  try {
+    run(root, ['init', '--json']);
+    const spec = genericSpec({
+      id: 'scenario-route',
+      event: 'activation_completed',
+      denominatorEvent: 'experiment_viewed',
+      preflight: {
+        scenarios: [
+          {
+            id: 'onboarding_path',
+            goal: 'Start from /onboarding and complete the activation path.',
+            expected_events: ['experiment_viewed', 'activation_completed'],
+          },
+        ],
+      },
+    });
+    spec.targeting = { domains: ['app'], segments: ['authenticated renters'] };
+    const specFile = path.join(root, 'spec.json');
+    writeFileSync(specFile, JSON.stringify(spec));
+    run(root, ['experiment', 'create', 'scenario-route', '--from-file', specFile, '--json']);
+    writeFileSync(
+      path.join(root, '.env'),
+      [
+        'POSTHOG_ANALYTICS_API_KEY=phc_test',
+        'POSTHOG_ANALYTICS_HOST=https://us.posthog.com',
+        'POSTHOG_PROJECT_ID=123',
+        '',
+      ].join('\n'),
+    );
+    run(root, ['connector', 'import', 'stripe-projects', '--json']);
+
+    const plan = run(root, ['preflight', 'plan', 'scenario-route', '--json']);
+    assert.equal(plan.data.plan.target_route, '/onboarding');
+    assert.equal(plan.data.plan.packet_app_url, 'http://localhost:3000/onboarding');
+    assert.equal(plan.data.plan.browser_context.requires_authenticated_session, true);
+
+    const preflight = run(root, [
+      'preflight',
+      'prepare',
+      'scenario-route',
+      '--agents',
+      '1',
+      '--browser',
+      '--app-url',
+      'http://localhost:3000/',
+      '--json',
+    ]);
+    assert.equal(preflight.data.packet_app_url, 'http://localhost:3000/onboarding');
+    assert.equal(preflight.warnings.some((warning) => warning.code === 'TARGET_ROUTE_APPLIED'), true);
+    assert.equal(preflight.warnings.some((warning) => warning.code === 'AUTHENTICATED_BROWSER_CONTEXT'), true);
+    assert.match(preflight._next.command, /growth preflight complete /);
+    assert.doesNotMatch(preflight._next.command, /complete-local/);
+    const packetUrl = readFileSync(
+      path.join(root, '.growth', 'runs', preflight.data.run.id, 'agent-packets', 'agent-1.url.txt'),
+      'utf8',
+    ).trim();
+    assert.equal(new URL(packetUrl).pathname, '/onboarding');
+    const policy = JSON.parse(
+      readFileSync(
+        path.join(root, '.growth', 'runs', preflight.data.run.id, 'agent-packets', 'agent-1.policy.json'),
+        'utf8',
+      ),
+    );
+    assert.equal(policy.browser_context.requires_authenticated_session, true);
+    assert.equal(policy.browser_context.blocker_report_fields.includes('auth_or_payment_blockers'), true);
+
+    const completed = run(root, ['preflight', 'complete', preflight.data.run.id, '--json']);
+    assert.equal(completed._next.command, `growth preflight pull ${preflight.data.run.id} --source posthog --json`);
   } finally {
     cleanup(root);
   }
@@ -521,8 +846,52 @@ test('preflight packets use explicit experiment scenarios when provided', () => 
     const policy = JSON.parse(readFileSync(path.join(packetDir, 'agent-1.policy.json'), 'utf8'));
     const prompt = readFileSync(path.join(packetDir, 'agent-1.prompt.txt'), 'utf8');
     assert.equal(policy.scenario.id, 'report_export_path');
+    assert.deepEqual(policy.expected_events, ['report_viewed', 'report_exported']);
     assert.match(prompt, /Export a report through the normal product UI/);
     assert.match(prompt, /report_exported/);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('inferred preflight packets separate primary path from guardrail observation', () => {
+  const root = tempRoot();
+  try {
+    run(root, ['init', '--json']);
+    const spec = genericSpec({
+      id: 'guardrail-split',
+      event: 'onboarding_completed',
+      denominatorEvent: 'onboarding_started',
+    });
+    spec.metrics.push({
+      id: 'onboarding_error_rate',
+      name: 'Onboarding error rate',
+      role: 'guardrail',
+      type: 'proportion',
+      direction: 'lower_is_better',
+      event: 'onboarding_error',
+      denominator_event: 'onboarding_started',
+      guardrail_threshold: 0.05,
+    });
+    const specFile = path.join(root, 'spec.json');
+    writeFileSync(specFile, JSON.stringify(spec));
+    run(root, ['experiment', 'create', 'guardrail-split', '--from-file', specFile, '--json']);
+
+    const plan = run(root, ['preflight', 'plan', 'guardrail-split', '--json']);
+    assert.deepEqual(plan.data.plan.scenario_expected_events[0].expected_events, [
+      'onboarding_started',
+      'onboarding_completed',
+    ]);
+    assert.deepEqual(plan.data.plan.guardrail_events, ['onboarding_error']);
+
+    const preflight = run(root, ['preflight', 'prepare', 'guardrail-split', '--agents', '2', '--json']);
+    const packetDir = path.join(root, '.growth', 'runs', preflight.data.run.id, 'agent-packets');
+    const primaryPolicy = JSON.parse(readFileSync(path.join(packetDir, 'agent-1.policy.json'), 'utf8'));
+    const guardrailPolicy = JSON.parse(readFileSync(path.join(packetDir, 'agent-2.policy.json'), 'utf8'));
+    assert.equal(primaryPolicy.scenario.id, 'primary_metric_path');
+    assert.deepEqual(primaryPolicy.expected_events, ['onboarding_started', 'onboarding_completed']);
+    assert.equal(guardrailPolicy.scenario.id, 'guardrail_metric_observation');
+    assert.deepEqual(guardrailPolicy.expected_events, ['onboarding_error', 'onboarding_started']);
   } finally {
     cleanup(root);
   }
@@ -564,6 +933,16 @@ test('react-vite preflight URLs use framework default and persist explicit app u
     assert.equal(new URL(url).origin, 'http://localhost:4444');
     const local = JSON.parse(readFileSync(path.join(root, '.growth', 'state.local.json'), 'utf8'));
     assert.equal(local.local_servers.app_url, 'http://localhost:4444');
+
+    const portless = run(root, ['preflight', 'prepare', 'my-test', '--agents', '1', '--json'], {
+      env: { PORTLESS_URL: 'https://vite-app.localhost' },
+    });
+    assert.equal(portless.data.app_url, 'https://vite-app.localhost');
+    url = readFileSync(
+      path.join(root, '.growth', 'runs', portless.data.run.id, 'agent-packets', 'agent-1.url.txt'),
+      'utf8',
+    ).trim();
+    assert.equal(new URL(url).origin, 'https://vite-app.localhost');
   } finally {
     cleanup(root);
   }
@@ -1117,6 +1496,27 @@ test('env set rejects literal values that would land in process args', () => {
   }
 });
 
+test('env set rejects empty stdin values', () => {
+  const root = tempRoot();
+  try {
+    run(root, ['init', '--json']);
+    const result = spawnSync(
+      process.execPath,
+      [cli, '--root', root, 'env', 'set', '--key', 'POSTHOG_PROJECT_ID', '--stdin', '--json'],
+      {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        input: '',
+      },
+    );
+    assert.equal(result.status, 1);
+    const envelope = JSON.parse(result.stdout);
+    assert.equal(envelope.error.code, 'empty_env_value');
+  } finally {
+    cleanup(root);
+  }
+});
+
 test('posthog connector uses variant_id canonically while accepting legacy variant fallback', () => {
   const root = tempRoot();
   try {
@@ -1245,6 +1645,25 @@ test('connector state records custom env names and stripe projects import', () =
   }
 });
 
+test('connector auth setup has a uniform ready shape when auth is not required', () => {
+  const root = tempRoot();
+  try {
+    run(root, ['init', '--json']);
+    run(root, ['connector', 'add', 'local', '--json']);
+
+    const setup = run(root, ['connector', 'auth', 'setup', 'local', '--json']);
+    assert.equal(setup.data.ready, true);
+    assert.equal(setup.data.resolution, 'ready');
+    assert.equal(setup.data.blocked, false);
+    assert.equal(setup.data.manual_input_required, false);
+    assert.deepEqual(setup.data.safe_commands, []);
+    assert.equal(setup.data.retry_command, 'growth connector auth check local --json');
+    assert.equal(setup._next.command, 'growth connector validate local --json');
+  } finally {
+    cleanup(root);
+  }
+});
+
 test('stripe projects import recognizes prefixed posthog env output', () => {
   const root = tempRoot();
   try {
@@ -1268,9 +1687,38 @@ test('stripe projects import recognizes prefixed posthog env output', () => {
     );
 
     const auth = run(root, ['connector', 'auth', 'check', 'posthog', '--json']);
-    assert.equal(auth.data.project_id_required, false);
-    assert.equal(auth.data.project_id_present, true);
+    assert.equal(auth.data.project_id_required_for_provider_pull, true);
+    assert.equal(auth.data.project_id_configured, false);
+    assert.equal(auth.data.project_id_present, false);
     assert.equal(auth.data.api_key_present, true);
+    assert.equal(auth.data.capabilities.telemetry_write.ready, true);
+    assert.equal(auth.data.capabilities.provider_pull.ready, false);
+    assert.deepEqual(auth.data.capabilities.provider_pull.missing, ['project_id']);
+    assert.deepEqual(auth.data.missing, ['project_id']);
+    assert.equal(auth.data.setup_command, 'growth connector auth setup posthog --json');
+    assert.equal(auth._next.command, 'growth connector auth setup posthog --json');
+
+    const setup = run(root, ['connector', 'auth', 'setup', 'posthog', '--json']);
+    assert.equal(setup.data.ready, false);
+    assert.equal(setup.data.resolution, 'manual_input_required');
+    assert.equal(setup.data.blocked, true);
+    assert.equal(setup.data.manual_input_required, true);
+    assert.equal(setup.data.telemetry_write_ready, true);
+    assert.equal(setup.data.provider_pull_ready, false);
+    assert.deepEqual(setup.data.safe_commands, ['growth env set --key POSTHOG_PROJECT_ID --stdin']);
+    assert.equal(setup.data.retry_command, 'growth connector auth check posthog --json');
+    assert.equal(setup.data.stop_reason.includes('Stop automated provider preflight'), true);
+    assert.equal(setup.data.missing_requirements.length, 1);
+    assert.equal(setup.data.missing_requirements[0].id, 'posthog-provider-pull-project-id');
+    assert.equal(setup.data.missing_requirements[0].capability, 'provider_pull');
+    assert.equal(setup.data.missing_requirements[0].env, 'POSTHOG_PROJECT_ID');
+    assert.deepEqual(setup.data.missing_requirements[0].safe_commands, [
+      'growth env set --key POSTHOG_PROJECT_ID --stdin',
+    ]);
+    assert.equal(setup.data.policy.do_not_read_env_files_directly, true);
+    assert.equal(setup.data.policy.do_not_probe_provider_apis_directly, true);
+    assert.equal(JSON.stringify(setup).includes('phc_test'), false);
+    assert.equal(setup._next, undefined);
 
     const state = JSON.parse(readFileSync(path.join(root, '.growth', 'state.json'), 'utf8'));
     assert.deepEqual(state.connectors.posthog.required_env, ['POSTHOG_ANALYTICS_API_KEY']);
