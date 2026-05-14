@@ -9,7 +9,7 @@ import {
   scenarioExpectedEvents as coverageScenarioExpectedEvents,
 } from './coverage.js';
 
-export type EvidenceSource = 'posthog' | 'statsig' | 'local_jsonl' | 'unconfigured';
+export type EvidenceSource = 'posthog' | 'local_jsonl' | 'unconfigured';
 export type ReadinessTier =
   | 'blocked'
   | 'static_ready'

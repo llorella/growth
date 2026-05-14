@@ -1,7 +1,7 @@
 import type { Experiment, ExperimentEvent } from '../core/experiment/types.js';
 import type { ConnectorConfig } from '../lib/connectors.js';
 
-export type ConnectorEvidenceSource = 'posthog' | 'statsig' | 'local_jsonl';
+export type ConnectorEvidenceSource = 'posthog' | 'local_jsonl';
 export type ConnectorCapabilityName = 'telemetry_write' | 'provider_pull' | 'local_synthetic';
 
 export interface ConnectorCapability {

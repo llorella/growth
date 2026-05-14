@@ -31,7 +31,7 @@ export interface ConnectorMapping {
 export interface ConnectorConfig {
   source: string;
   /** Drives the pull strategy. Pull supports 'posthog' and local JSONL-backed 'native-app'. */
-  kind: 'posthog' | 'statsig' | 'segment' | 'stripe' | 'native-app' | 'warehouse' | 'custom';
+  kind: 'posthog' | 'segment' | 'stripe' | 'native-app' | 'warehouse' | 'custom';
   user_id_path?: string;
   anonymous_id_path?: string;
   experiment_id_path?: string;
@@ -44,13 +44,6 @@ export interface ConnectorConfig {
     host?: string;
     project_id?: string | number;
     api_key_env?: string;
-  };
-  /** Statsig-specific config block. */
-  statsig?: {
-    api_url?: string;
-    project_id?: string | number;
-    server_key_env?: string;
-    console_api_key_env?: string;
   };
   /** Native/local app event stream config. events_file is JSONL relative to the repo root unless absolute. */
   local?: {

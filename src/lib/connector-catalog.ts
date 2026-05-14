@@ -5,7 +5,6 @@ import type { ConnectorConfig, ConnectorMapping } from './connectors.js';
 
 export const CONNECTOR_KINDS = [
   'posthog',
-  'statsig',
   'segment',
   'stripe',
   'native-app',

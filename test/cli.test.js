@@ -632,53 +632,6 @@ test('preflight plan uses provider-backed connector when PostHog is ready', () =
   }
 });
 
-test('preflight plan treats Statsig as a provider-backed connector adapter', () => {
-  const root = tempRoot();
-  try {
-    run(root, ['init', '--json']);
-    const spec = genericSpec({
-      id: 'statsig-provider-plan',
-      event: 'activation_completed',
-      denominatorEvent: 'experiment_viewed',
-    });
-    spec.targeting = { domains: ['/onboarding'] };
-    const specFile = path.join(root, 'spec.json');
-    writeFileSync(specFile, JSON.stringify(spec));
-    run(root, ['experiment', 'create', 'statsig-provider-plan', '--from-file', specFile, '--json']);
-    writeFileSync(path.join(root, '.env'), ['STATSIG_SERVER_SECRET=secret-test', ''].join('\n'));
-
-    const added = run(root, ['connector', 'add', 'statsig', '--json']);
-    assert.equal(added.data.connector.source, 'statsig');
-    assert.equal(added.data.connector.kind, 'statsig');
-    assert.equal(added.data.connector.statsig.server_key_env, 'STATSIG_SERVER_SECRET');
-    assert.deepEqual(added.data.connector.statsig.project_id, 'STATSIG_PROJECT_ID');
-
-    const auth = run(root, ['connector', 'auth', 'check', 'statsig', '--json']);
-    assert.equal(auth.data.capabilities.telemetry_write.ready, true);
-    assert.equal(auth.data.capabilities.provider_pull.ready, false);
-    assert.deepEqual(auth.data.capabilities.provider_pull.missing, ['console_api_key', 'project_id']);
-
-    const setup = run(root, ['connector', 'auth', 'setup', 'statsig', '--json']);
-    assert.equal(setup.data.ready, false);
-    assert.equal(setup.data.safe_commands.includes('growth env set --key STATSIG_CONSOLE_API_KEY --stdin'), true);
-    assert.equal(setup.data.safe_commands.includes('growth env set --key STATSIG_PROJECT_ID --stdin'), true);
-
-    const plan = run(root, ['preflight', 'plan', 'statsig-provider-plan', '--json']);
-    assert.equal(plan.data.plan.evidence.preferred_evidence, 'statsig');
-    assert.equal(plan.data.plan.evidence.readiness_ceiling, 'blocked');
-    assert.equal(plan.data.plan.next_command, 'growth connector auth setup statsig --json');
-    assert.equal(plan.data.plan.evidence.available_sources[0].evidence_source, 'statsig');
-    assert.equal(plan.data.plan.evidence.available_sources[0].provider_backed, true);
-    assert.equal(plan.data.plan.evidence.available_sources[0].telemetry_write_ready, true);
-    assert.equal(plan.data.plan.evidence.available_sources[0].provider_pull_ready, false);
-    assert.equal(plan.data.plan.evidence.blocked_sources[0].capability, 'provider_pull');
-    assert.equal(plan.data.plan.evidence.blocked_sources[0].manual_input_required, true);
-    assert.equal(plan.data.plan.evidence.blocked_sources[0].reason.includes('Statsig'), true);
-  } finally {
-    cleanup(root);
-  }
-});
-
 test('variant implementation metadata is command-managed and appears in preflight plan', () => {
   const root = tempRoot();
   try {

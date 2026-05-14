@@ -1,12 +1,10 @@
 import type { ConnectorConfig } from '../lib/connectors.js';
 import { localAdapter } from './local/adapter.js';
 import { postHogAdapter } from './posthog/adapter.js';
-import { statsigAdapter } from './statsig/adapter.js';
 import type { ConnectorAdapter } from './types.js';
 
 const adapters = new Map<ConnectorConfig['kind'], ConnectorAdapter>([
   [postHogAdapter.kind, postHogAdapter],
-  [statsigAdapter.kind, statsigAdapter],
   [localAdapter.kind, localAdapter],
 ]);
 
