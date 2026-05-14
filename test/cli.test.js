@@ -238,19 +238,15 @@ test('instrumentation plan uses custom events and root Next.js layout', () => {
 
     run(root, ['init', '--framework', 'nextjs-app-router', '--json']);
     assert.equal(existsSync(path.join(root, '.agents', 'skills', 'growth', 'references', 'nextjs-app-router.md')), true);
-    assert.equal(existsSync(path.join(root, '.agents', 'skills', 'growth', 'references', 'spa-navigation.md')), true);
+    assert.equal(existsSync(path.join(root, '.agents', 'skills', 'growth', 'references', 'spa-navigation.md')), false);
     const skillReference = readFileSync(
       path.join(root, '.agents', 'skills', 'growth', 'references', 'nextjs-app-router.md'),
       'utf8',
     );
-    const pullWorkflow = readFileSync(
-      path.join(root, '.agents', 'skills', 'growth', 'workflows', 'pull-and-analyze.md'),
-      'utf8',
-    );
     assert.equal(skillReference.includes('PostHog-style'), false);
     assert.equal(skillReference.includes('connector_event_shapes'), true);
-    assert.equal(pullWorkflow.includes('connector auth check posthog'), false);
-    assert.equal(pullWorkflow.includes('Follow the returned `_next.command`'), true);
+    assert.equal(existsSync(path.join(root, '.agents', 'skills', 'growth', 'workflows', 'run-preflight.md')), true);
+    assert.equal(existsSync(path.join(root, '.agents', 'skills', 'growth', 'workflows', 'pull-and-analyze.md')), false);
     const spec = {
       id: 'placeholder',
       name: 'Onboarding workspace test',

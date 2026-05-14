@@ -4,7 +4,7 @@ import { paths } from './paths.js';
 
 const SKILL_MD = `---
 name: growth
-description: Use the growth CLI to design, instrument, verify, run, pull, and analyze growth experiments in this repository.
+description: Use the growth CLI to design, instrument, verify, and run growth experiments in this repository.
 allowed-tools:
   - Bash(growth *)
   - Bash(node dist/index.js *)
@@ -39,7 +39,7 @@ Rules:
 - Resolve provider-pull blockers only through Growth commands; do not read env files or call analytics provider APIs directly.
 - Prefer the growth MCP server when available; otherwise use \`growth ... --json\`.
 - Use the next command Growth returns; do not jump directly to local JSONL unless the plan selects it.
-- Use \`growth pull\` and \`growth analyze\`; do not rely on raw analytics screenshots.
+- Use \`growth pull\`; do not rely on raw analytics screenshots.
 - Treat \`static_ready\` as static readiness only.
 - Treat \`local_synthetic_ready\` as local synthetic readiness only.
 - Treat \`ready_for_provider_preflight\` as local synthetic readiness only.
@@ -83,41 +83,6 @@ growth preflight plan <experiment_id> --json
 \`\`\`
 `;
 
-const SPA_NAVIGATION_REFERENCE = `# SPA Navigation Reference
-
-This applies to React Router, Vite SPAs, Remix client navigation, and any app where links update routes without a full page load.
-
-## Synthetic Agent Context
-
-Preflight packet URLs include \`agent_generated\`, \`agent_run_id\`, \`experiment_id\`, and \`variant\`.
-
-Client-side navigation often drops those query params. Read them once on first page load, persist them to \`sessionStorage\`, and attach the persisted values to every event.
-
-Canonical emitted event fields:
-
-- \`experiment_id\`
-- \`variant_id\`
-- \`user_id\`
-- \`session_id\`
-- \`timestamp\`
-- \`agent_generated\`
-- \`agent_run_id\`
-
-The query param is named \`variant\` because it forces the synthetic packet branch. The event property should be \`variant_id\`; emit \`variant\` only as a compatibility alias when a connector requires it.
-
-## Verification Loop
-
-After implementing, run:
-
-\`\`\`bash
-growth instrumentation verify <experiment_id> --json
-growth preflight plan <experiment_id> --json
-\`\`\`
-
-Use local JSONL only when \`growth preflight plan\` selects it or explicitly names
-it as a fallback.
-`;
-
 const WORKFLOWS: Record<string, string> = {
   'create-experiment.md': `# Create Experiment
 
@@ -150,29 +115,13 @@ const WORKFLOWS: Record<string, string> = {
 7. Complete with \`growth preflight complete <run_id> --json\`.
 8. Pull and audit using the source selected by Growth.
 `,
-  'pull-and-analyze.md': `# Pull And Analyze
-
-1. Run \`growth preflight plan <id> --json\`.
-2. Follow the returned \`_next.command\`; do not choose a connector source yourself.
-3. If Growth returns a connector auth command, run that exact command and follow only Growth's safe setup commands.
-4. Pull with the source selected by Growth, using the window or timestamp Growth returned.
-5. Run \`growth analyze <id> --segment real-users --json\` only after provider-backed real-user evidence is available.
-6. For synthetic traffic, run \`growth analyze <id> --segment agent-generated --json\`.
-`,
-  'cleanup-experiment.md': `# Cleanup Experiment
-
-1. Confirm the final state with \`growth experiment show <id> --json\`.
-2. Archive abandoned or completed experiments with \`growth experiment archive <id> --json\`.
-3. Remove app instrumentation only after confirming no active experiment or analysis depends on those events.
-4. Keep \`.growth/runs/*\` and \`.growth/audit.jsonl\` as rollout history unless the user explicitly asks to delete local artifacts.
-`,
 };
 
 const AGENTS_SECTION = `## growth
 
 This repository is initialized for growth experiments.
 
-Use the \`growth\` CLI as the control plane for experiments, connectors, synthetic preflights, pulls, analysis, and audit.
+Use the \`growth\` CLI as the control plane for experiments, connectors, synthetic preflights, pulls, and audit.
 
 Start with \`growth status --json\`.
 Use \`growth llm-context --json\` for current instructions.
@@ -198,15 +147,10 @@ export async function writeSkill(root: string): Promise<{ wrote: string[] }> {
     path.join(p.agentsSkillDir, 'references', 'nextjs-app-router.md'),
     NEXTJS_APP_ROUTER_REFERENCE,
   );
-  await fs.writeFile(
-    path.join(p.agentsSkillDir, 'references', 'spa-navigation.md'),
-    SPA_NAVIGATION_REFERENCE,
-  );
   wrote.push(
     path.join(p.agentsSkillDir, 'SKILL.md'),
     path.join(p.agentsSkillDir, 'schema.md'),
     path.join(p.agentsSkillDir, 'references', 'nextjs-app-router.md'),
-    path.join(p.agentsSkillDir, 'references', 'spa-navigation.md'),
   );
   for (const [file, contents] of Object.entries(WORKFLOWS)) {
     const target = path.join(p.agentsSkillWorkflowsDir, file);
