@@ -323,7 +323,7 @@ async function stripeProjectsImportSuggestion(
   return undefined;
 }
 
-export async function discoverStripeProjectsPostHog(root: string): Promise<{
+async function discoverStripeProjectsPostHog(root: string): Promise<{
   host: string;
   projectId?: string | number;
   apiKeyEnv: string;

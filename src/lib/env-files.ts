@@ -7,7 +7,7 @@ export async function readEnvValue(root: string, key: string): Promise<string | 
   return process.env[key] ?? (await readLocalEnv(root))[key];
 }
 
-export async function readLocalEnv(root: string): Promise<Record<string, string>> {
+async function readLocalEnv(root: string): Promise<Record<string, string>> {
   const out: Record<string, string> = {};
   for (const file of LOCAL_ENV_FILES) {
     try {

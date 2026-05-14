@@ -8,7 +8,7 @@ export interface ConnectorMapping {
 
 export interface ConnectorConfig {
   source: string;
-  kind: 'posthog' | 'segment' | 'stripe' | 'native-app' | 'warehouse' | 'custom';
+  kind: 'posthog' | 'native-app';
   user_id_path?: string;
   anonymous_id_path?: string;
   experiment_id_path?: string;

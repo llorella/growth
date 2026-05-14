@@ -3,13 +3,9 @@ import { SYNTHETIC_TRAFFIC_PAYLOAD_PATHS } from '../core/evidence/synthetic-traf
 import { DEFAULT_EVENT_TAXONOMY } from './defaults.js';
 import type { ConnectorConfig, ConnectorMapping } from '../connectors/types.js';
 
-export const CONNECTOR_KINDS = [
+const CONNECTOR_KINDS = [
   'posthog',
-  'segment',
-  'stripe',
   'native-app',
-  'warehouse',
-  'custom',
 ] as const;
 
 export function isConnectorKind(kind: unknown): kind is ConnectorConfig['kind'] {

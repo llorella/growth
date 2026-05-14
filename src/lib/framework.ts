@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
-export const FRAMEWORK_IDS = [
+const FRAMEWORK_IDS = [
   'nextjs-app-router',
   'nextjs-pages-router',
   'react-vite',

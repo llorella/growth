@@ -28,107 +28,6 @@ export const BUILT_IN_TEMPLATES: Record<string, Partial<Experiment>> = {
     },
     schedule: { max_duration_days: 30, min_runtime_days: 7 },
   },
-  'activation-test': {
-    name: 'Activation test',
-    hypothesis:
-      'We believe reducing onboarding friction will increase activation because users can reach value with fewer decisions.',
-    variants: [
-      { id: 'control', name: 'Control', weight: 50 },
-      { id: 'treatment', name: 'Treatment', weight: 50 },
-    ],
-    metrics: [
-      {
-        id: 'activation_rate',
-        name: 'Activation rate',
-        role: 'primary',
-        type: 'proportion',
-        direction: 'higher_is_better',
-        event: 'activation_completed',
-        denominator_event: 'onboarding_started',
-      },
-      {
-        id: 'error_rate',
-        name: 'Error rate',
-        role: 'guardrail',
-        type: 'proportion',
-        direction: 'lower_is_better',
-        event: 'onboarding_error',
-        denominator_event: 'onboarding_started',
-        guardrail_threshold: 0.15,
-      },
-    ],
-    sample_size: {
-      baseline_rate: 0.25,
-      minimum_detectable_effect: 0.15,
-      power: 0.8,
-      alpha: 0.05,
-    },
-    schedule: { max_duration_days: 30, min_runtime_days: 7 },
-  },
-  'pricing-test': {
-    name: 'Pricing test',
-    hypothesis:
-      'We believe changing package presentation will increase paid conversion because the preferred option will be easier to compare.',
-    variants: [
-      { id: 'control', name: 'Control', weight: 50 },
-      { id: 'treatment', name: 'Treatment', weight: 50 },
-    ],
-    metrics: [
-      {
-        id: 'paid_conversion_rate',
-        name: 'Paid conversion rate',
-        role: 'primary',
-        type: 'proportion',
-        direction: 'higher_is_better',
-        event: 'checkout_completed',
-        denominator_event: 'pricing_viewed',
-      },
-      {
-        id: 'refund_rate',
-        name: 'Refund rate',
-        role: 'guardrail',
-        type: 'proportion',
-        direction: 'lower_is_better',
-        event: 'refund_requested',
-        denominator_event: 'checkout_completed',
-        guardrail_threshold: 0.1,
-      },
-    ],
-    sample_size: {
-      baseline_rate: 0.08,
-      minimum_detectable_effect: 0.2,
-      power: 0.8,
-      alpha: 0.05,
-    },
-    schedule: { max_duration_days: 45, min_runtime_days: 7 },
-  },
-  'onboarding-test': {
-    name: 'Onboarding test',
-    hypothesis:
-      'We believe personalized onboarding will increase completion because users will see a path that matches their intent.',
-    variants: [
-      { id: 'control', name: 'Control', weight: 50 },
-      { id: 'treatment', name: 'Treatment', weight: 50 },
-    ],
-    metrics: [
-      {
-        id: 'onboarding_completion_rate',
-        name: 'Onboarding completion rate',
-        role: 'primary',
-        type: 'proportion',
-        direction: 'higher_is_better',
-        event: 'onboarding_completed',
-        denominator_event: 'onboarding_started',
-      },
-    ],
-    sample_size: {
-      baseline_rate: 0.3,
-      minimum_detectable_effect: 0.15,
-      power: 0.8,
-      alpha: 0.05,
-    },
-    schedule: { max_duration_days: 30, min_runtime_days: 7 },
-  },
   'onboarding-activation': {
     name: 'Onboarding activation preflight',
     hypothesis:
@@ -234,33 +133,6 @@ export const BUILT_IN_TEMPLATES: Record<string, Partial<Experiment>> = {
     },
     schedule: { max_duration_days: 30, min_runtime_days: 7 },
   },
-  'cross-sell-test': {
-    name: 'Cross-sell test',
-    hypothesis:
-      'We believe recommending a second product after activation will increase expansion because users will understand the next adjacent use case.',
-    variants: [
-      { id: 'control', name: 'Control', weight: 50 },
-      { id: 'treatment', name: 'Treatment', weight: 50 },
-    ],
-    metrics: [
-      {
-        id: 'cross_sell_acceptance_rate',
-        name: 'Cross-sell acceptance rate',
-        role: 'primary',
-        type: 'proportion',
-        direction: 'higher_is_better',
-        event: 'cross_sell_accepted',
-        denominator_event: 'cross_sell_presented',
-      },
-    ],
-    sample_size: {
-      baseline_rate: 0.12,
-      minimum_detectable_effect: 0.2,
-      power: 0.8,
-      alpha: 0.05,
-    },
-    schedule: { max_duration_days: 30, min_runtime_days: 7 },
-  },
 };
 
 export const DEFAULT_EVENT_TAXONOMY = {
@@ -320,36 +192,11 @@ export const DEFAULT_EVENT_TAXONOMY = {
       description: 'A user clicked support, help, or contact during onboarding.',
       required_properties: ['experiment_id', 'variant_id', 'user_id', 'session_id', 'timestamp', 'agent_generated', 'agent_run_id'],
     },
-    {
-      event: 'pricing_viewed',
-      description: 'A user viewed a pricing page or package comparison.',
-      required_properties: ['experiment_id', 'variant_id', 'user_id', 'session_id', 'timestamp', 'agent_generated', 'agent_run_id'],
-    },
-    {
-      event: 'checkout_completed',
-      description: 'A user completed checkout.',
-      required_properties: ['experiment_id', 'variant_id', 'user_id', 'session_id', 'timestamp', 'agent_generated', 'agent_run_id'],
-    },
-    {
-      event: 'refund_requested',
-      description: 'A user requested a refund.',
-      required_properties: ['experiment_id', 'variant_id', 'user_id', 'session_id', 'timestamp', 'agent_generated', 'agent_run_id'],
-    },
-    {
-      event: 'cross_sell_presented',
-      description: 'A user saw a cross-sell recommendation.',
-      required_properties: ['experiment_id', 'variant_id', 'user_id', 'session_id', 'timestamp', 'agent_generated', 'agent_run_id'],
-    },
-    {
-      event: 'cross_sell_accepted',
-      description: 'A user accepted a cross-sell recommendation.',
-      required_properties: ['experiment_id', 'variant_id', 'user_id', 'session_id', 'timestamp', 'agent_generated', 'agent_run_id'],
-    },
   ],
 };
 
 export const CATALOG = {
-  connectors: ['local', 'posthog', 'segment', 'stripe', 'native-app', 'warehouse'],
+  connectors: ['local', 'posthog'],
   templates: Object.keys(BUILT_IN_TEMPLATES),
   metric_archetypes: [
     'conversion_rate',
