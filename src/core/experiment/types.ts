@@ -146,67 +146,9 @@ export interface ExperimentEvent {
   idempotency_key?: string;
 }
 
-export interface AnalysisResult {
-  experiment_id: string;
-  status: ExperimentStatus;
-  runtime_days: number;
-  total_users: number;
-  per_variant: Record<string, { users: number }>;
-  metrics: MetricAnalysis[];
-  recommendation: Recommendation;
-  generated_at: string;
-  segment: AnalysisSegment;
-}
-
-export type AnalysisSegment = 'all' | 'real-users' | 'agent-generated';
-
-export interface MetricAnalysis {
-  metric_id: string;
-  metric_name: string;
-  role: MetricRole;
-  type: MetricType;
-  direction: Direction;
-  variants: Record<
-    string,
-    {
-      n: number;
-      successes?: number;
-      sum?: number;
-      rate?: number;
-      mean?: number;
-    }
-  >;
-  comparisons: ComparisonResult[];
-}
-
-export interface ComparisonResult {
-  variant_id: string;
-  baseline_id: string;
-  absolute_diff: number;
-  relative_lift: number;
-  p_value: number;
-  confidence_interval_95: { lower: number; upper: number };
-  significant: boolean;
-  status: 'significant' | 'not_significant' | 'insufficient_data';
-}
-
-export interface Recommendation {
-  action:
-    | 'ship_treatment'
-    | 'keep_running'
-    | 'stop_inconclusive'
-    | 'rollback'
-    | 'guardrail_breach'
-    | 'instrumentation_incomplete'
-    | 'synthetic_only_no_ship';
-  confidence: 'high' | 'medium' | 'low';
-  reasoning: string;
-  next_steps: string[];
-}
-
 export interface GrowthRun {
   id: string;
-  type: 'preflight' | 'instrumentation' | 'pull' | 'analysis';
+  type: 'preflight' | 'instrumentation' | 'pull';
   experiment_id?: string;
   status: 'prepared' | 'running' | 'completed' | 'failed' | 'canceled';
   created_at: string;

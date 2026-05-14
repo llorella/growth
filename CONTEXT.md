@@ -36,12 +36,6 @@ The preflight audit trail is the launch-readiness record produced from a growth 
 
 The audit trail policy is separate from evidence loading. Evidence loading may read the store, reports, connectors, and run artifacts. The audit trail policy should be testable from in-memory evidence and is responsible for checks, evidence summaries, and the final recommendation.
 
-### Analysis Evidence
-
-Analysis evidence is the experiment definition, assignments, events, selected analysis segment, and analysis timestamp used to produce statistical analysis and a ship recommendation.
-
-The analysis policy is separate from evidence loading. Evidence loading may read the store and resolve the experiment. The analysis policy should be testable from in-memory evidence and is responsible for segment filtering, per-variant metric analysis, significance comparisons, and recommendation logic.
-
 ### Connector Catalog
 
 The connector catalog is the canonical source of connector kinds, default connector configs, mapping conventions, auth env defaults, required scopes, and connector event coverage rules.

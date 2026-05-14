@@ -95,7 +95,6 @@ export function registerLlmContext(program: Command, ctx: RunCtx): void {
               'growth preflight pull <run_id> --source <provider> --json',
               'growth preflight audit <run_id> --json',
               'growth pull <id> --source <source> --after <iso> --json',
-              'growth analyze <id> --segment real-users --json',
             ],
             experiments: experiments.map((e) => ({
               id: e.id,

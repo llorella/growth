@@ -29,7 +29,6 @@ export interface SharedState {
     {
       file: string;
       status: string;
-      last_analysis_at?: string | null;
     }
   >;
   initialized_at: string;

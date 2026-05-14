@@ -169,7 +169,6 @@ export async function startExperimentCommand(root: string, id: string) {
     nextSteps: [
       `growth instrumentation verify ${id} --json`,
       `growth pull ${id} --source <name> --after <iso> --json`,
-      `growth analyze ${id} --segment real-users --json`,
     ],
   };
 }

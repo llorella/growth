@@ -43,7 +43,7 @@ export async function simulateExperimentCommand(
         ([v, p]) => `  ${v}: ${p.users} users`,
       ),
     ].join('\n'),
-    nextSteps: opts.persist === false ? [] : [`growth analyze ${id} --segment agent-generated --json`],
+    nextSteps: opts.persist === false ? [] : [`growth preflight plan ${id} --json`],
   };
 }
 
@@ -78,6 +78,6 @@ export async function pullExperimentCommand(
       `  raw: ${result.raw_fetched}  emitted: ${result.emitted}  deduped: ${result.deduped}`,
       `  dropped: ${result.dropped.map((d) => `${d.reason}=${d.count}`).join(', ') || 'none'}`,
     ].join('\n'),
-    nextSteps: [`growth analyze ${experimentId} --json`],
+    nextSteps: [`growth preflight plan ${experimentId} --json`],
   };
 }

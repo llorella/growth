@@ -65,7 +65,6 @@ export function readinessModel(opts: {
   static_ready: boolean;
   local_synthetic_ready: boolean;
   provider_preflight_passed: boolean;
-  real_user_analysis_ready: boolean;
   notes: string[];
 } {
   const notes: string[] = [];
@@ -85,7 +84,6 @@ export function readinessModel(opts: {
     static_ready: staticReady,
     local_synthetic_ready: localSyntheticReady,
     provider_preflight_passed: false,
-    real_user_analysis_ready: false,
     notes,
   };
 }

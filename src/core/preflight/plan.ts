@@ -14,8 +14,7 @@ export type ReadinessTier =
   | 'blocked'
   | 'static_ready'
   | 'local_synthetic_ready'
-  | 'provider_preflight_passed'
-  | 'real_user_analysis_ready';
+  | 'provider_preflight_passed';
 
 export interface EvidencePlan {
   preferred_evidence: EvidenceSource;

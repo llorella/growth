@@ -360,5 +360,5 @@ export const CATALOG = {
     'support_burden',
     'escape_hatch_rate',
   ],
-  workflows: ['create-experiment', 'instrument-app', 'prepare-preflight', 'pull-analyze'],
+  workflows: ['create-experiment', 'instrument-app', 'prepare-preflight'],
 };

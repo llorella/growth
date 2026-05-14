@@ -105,7 +105,6 @@ export class Store {
     shared.experiments[exp.id] = {
       file: path.relative(this.root, path.join(this.p.experimentsDir, `${exp.id}.json`)),
       status: exp.status,
-      last_analysis_at: shared.experiments[exp.id]?.last_analysis_at ?? null,
     };
     await writeShared(this.root, shared);
   }

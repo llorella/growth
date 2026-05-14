@@ -284,8 +284,8 @@ export async function auditPreflightRun(root: string, runId: string, opts: { mar
 async function nextAfterAudit(root: string, run: GrowthRun, audit: PreflightAudit) {
   if (audit.recommendation === 'provider_preflight_passed') {
     return {
-      command: `growth analyze ${run.experiment_id ?? '<experiment_id>'} --segment real-users --json`,
-      until: 'real-user launch and measurement are ready to begin',
+      command: `growth experiment start ${run.experiment_id ?? '<experiment_id>'} --json`,
+      until: 'experiment is ready for real-user launch',
     };
   }
   if (audit.recommendation === 'ready_for_provider_preflight') {

@@ -229,19 +229,6 @@ const tools: GrowthTool[] = [
     ),
     (input) => [requireString(input, 'run_id'), ...booleanFlag(input, 'markdown', '--markdown')],
   ),
-  tool(
-    'growth_analyze',
-    ['analyze'],
-    'Analyze real-user or synthetic experiment results.',
-    schema(
-      {
-        experiment_id: { type: 'string' },
-        segment: { type: 'string', enum: ['real-users', 'agent-generated', 'all'] },
-      },
-      ['experiment_id'],
-    ),
-    (input) => [requireString(input, 'experiment_id'), ...optionalFlag(input, 'segment', '--segment')],
-  ),
 ];
 
 const byName = new Map(tools.map((toolDef) => [toolDef.name, toolDef]));
