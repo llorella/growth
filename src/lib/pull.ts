@@ -15,10 +15,10 @@ import { paths } from './paths.js';
 import { Store } from './store.js';
 import { GrowthError } from './envelope.js';
 import {
-  getConnector,
+  readConnector,
   listConnectors,
-  type ConnectorConfig,
-} from './connectors.js';
+} from '../connectors/persistence.js';
+import type { ConnectorConfig } from '../connectors/types.js';
 import type { Assignment, ExperimentEvent } from '../core/experiment/types.js';
 
 export interface PullCursors {
@@ -80,7 +80,7 @@ interface PullRecord extends PullResult {
 export async function pull(root: string, opts: PullOptions): Promise<PullResult> {
   const store = new Store(root);
 
-  const connector = await getConnector(root, opts.source);
+  const connector = await readConnector(root, opts.source);
   if (!connector) {
     throw new GrowthError(
       'connector_not_found',

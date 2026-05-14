@@ -1,4 +1,4 @@
-import type { ConnectorConfig } from '../../lib/connectors.js';
+import type { ConnectorConfig } from '../../connectors/types.js';
 import type { ProjectProfile } from '../../lib/project-profile.js';
 import type { Experiment } from '../experiment/types.js';
 import {

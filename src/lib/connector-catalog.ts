@@ -1,7 +1,7 @@
 import type { Experiment } from '../core/experiment/types.js';
 import { SYNTHETIC_TRAFFIC_PAYLOAD_PATHS } from '../core/evidence/synthetic-traffic.js';
 import { DEFAULT_EVENT_TAXONOMY } from './defaults.js';
-import type { ConnectorConfig, ConnectorMapping } from './connectors.js';
+import type { ConnectorConfig, ConnectorMapping } from '../connectors/types.js';
 
 export const CONNECTOR_KINDS = [
   'posthog',

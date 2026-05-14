@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { ConnectorConfig } from '../lib/connectors.js';
+import type { ConnectorConfig } from './types.js';
 import type { ConnectorMapResult } from './types.js';
 
 /**

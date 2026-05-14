@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { Experiment } from '../../core/experiment/types.js';
 import { containsTimestamp } from '../../core/evidence/event-window.js';
 import { requiredConnectorEvents } from '../../lib/connector-catalog.js';
-import type { ConnectorConfig } from '../../lib/connectors.js';
+import type { ConnectorConfig } from '../types.js';
 import { GrowthError } from '../../lib/envelope.js';
 import { providerCapabilityPolicy } from '../auth-policy.js';
 import { mapConnectorEvent, readConnectorPath } from '../mapping.js';

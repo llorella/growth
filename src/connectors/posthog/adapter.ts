@@ -4,7 +4,7 @@ import type { Experiment } from '../../core/experiment/types.js';
 import {
   requiredConnectorEvents,
 } from '../../lib/connector-catalog.js';
-import type { ConnectorConfig } from '../../lib/connectors.js';
+import type { ConnectorConfig } from '../types.js';
 import { readEnvValue } from '../../lib/env-files.js';
 import { parseEnvText } from '../../lib/env-files.js';
 import { GrowthError } from '../../lib/envelope.js';

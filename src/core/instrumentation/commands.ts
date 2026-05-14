@@ -5,7 +5,7 @@ import { resolvePreflightPlan } from '../preflight/plan.js';
 import { SYNTHETIC_TRAFFIC_QUERY_PARAMS } from '../evidence/synthetic-traffic.js';
 import { GrowthError } from '../../lib/envelope.js';
 import { resolveAppUrl } from '../../lib/app-url.js';
-import { listConnectors } from '../../lib/connectors.js';
+import { listConnectors } from '../../connectors/persistence.js';
 import { suggestedInstrumentationFiles, type FrameworkId } from '../../lib/framework.js';
 import { readProjectProfile } from '../../lib/project-profile.js';
 import { Store } from '../../lib/store.js';

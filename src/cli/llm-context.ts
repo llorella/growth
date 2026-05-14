@@ -7,7 +7,7 @@ import type { Command } from 'commander';
 import { wrap, type RunCtx } from '../lib/runner.js';
 import { requireInitialized } from '../lib/gating.js';
 import { Store } from '../lib/store.js';
-import { listConnectors } from '../lib/connectors.js';
+import { listConnectors } from '../connectors/persistence.js';
 import { readShared } from '../lib/state.js';
 import { connectorSchema, eventTaxonomySchema, experimentSchema, preflightReportSchema } from '../core/experiment/schema.js';
 import { CATALOG } from '../lib/defaults.js';

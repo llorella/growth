@@ -1,5 +1,5 @@
 import { defaultTaxonomyMappings, envProjectIds } from '../../lib/connector-catalog.js';
-import type { ConnectorConfig } from '../../lib/connectors.js';
+import type { ConnectorConfig } from '../types.js';
 
 export const POSTHOG_DEFAULT_HOST = 'https://us.posthog.com';
 export const POSTHOG_DEFAULT_HOST_ENV = 'POSTHOG_ANALYTICS_HOST';

@@ -1,5 +1,5 @@
 import { defaultTaxonomyMappings } from '../../lib/connector-catalog.js';
-import type { ConnectorConfig } from '../../lib/connectors.js';
+import type { ConnectorConfig } from '../types.js';
 
 export function defaultLocalConnector(eventsFile = 'tmp/events.jsonl'): ConnectorConfig {
   return {

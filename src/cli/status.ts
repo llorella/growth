@@ -4,7 +4,7 @@ import path from 'node:path';
 import { wrap, type RunCtx } from '../lib/runner.js';
 import { isInitialized, readShared, paths } from '../lib/state.js';
 import { Store } from '../lib/store.js';
-import { listConnectors } from '../lib/connectors.js';
+import { listConnectors } from '../connectors/persistence.js';
 import { connectorAdapterFor } from '../connectors/registry.js';
 import { readEnvValue } from '../lib/env-files.js';
 import { projectProfileUnknowns, readProjectProfile } from '../lib/project-profile.js';

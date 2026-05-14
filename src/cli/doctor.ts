@@ -6,7 +6,7 @@ import { wrap, type RunCtx } from '../lib/runner.js';
 import { isInitialized } from '../lib/state.js';
 import { Store } from '../lib/store.js';
 import { assertConnectorCoverage } from '../connectors/coverage.js';
-import { listConnectors } from '../lib/connectors.js';
+import { listConnectors } from '../connectors/persistence.js';
 import { suggestedInstrumentationFiles, type FrameworkId } from '../lib/framework.js';
 import { readProjectProfile } from '../lib/project-profile.js';
 import { paths } from '../lib/paths.js';

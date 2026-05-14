@@ -8,11 +8,11 @@ import {
 import { connectorAdapterFor } from './registry.js';
 import { GrowthError } from '../lib/envelope.js';
 import {
-  getConnector,
+  readConnector,
   listConnectors,
   validateConnectorConfig,
-  type ConnectorConfig,
-} from '../lib/connectors.js';
+} from './persistence.js';
+import type { ConnectorConfig } from './types.js';
 import { Store } from '../lib/store.js';
 
 export interface AddConnectorCommandOptions {
@@ -101,7 +101,7 @@ export async function importConnectorCommand(
 }
 
 export async function showConnectorCommand(root: string, source: string) {
-  const c = await getConnector(root, source);
+  const c = await readConnector(root, source);
   if (!c) throw new GrowthError('not_found', `Connector "${source}" not found.`);
   return { data: { connector: c }, humanText: JSON.stringify(c, null, 2) };
 }
@@ -129,7 +129,7 @@ export async function validateConnectorCommand(root: string, source?: string) {
 }
 
 export async function checkConnectorAuthCommand(root: string, source: string) {
-  const c = await getConnector(root, source);
+  const c = await readConnector(root, source);
   if (!c) throw new GrowthError('not_found', `Connector "${source}" not found.`);
   const adapter = connectorAdapterFor(c);
   if (!adapter) {
@@ -139,7 +139,7 @@ export async function checkConnectorAuthCommand(root: string, source: string) {
 }
 
 export async function setupConnectorAuthCommand(root: string, source: string) {
-  const c = await getConnector(root, source);
+  const c = await readConnector(root, source);
   if (!c) throw new GrowthError('not_found', `Connector "${source}" not found.`);
   const adapter = connectorAdapterFor(c);
   if (!adapter) {

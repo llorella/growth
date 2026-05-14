@@ -1,5 +1,5 @@
 import { GrowthError } from '../lib/envelope.js';
-import type { ConnectorConfig } from '../lib/connectors.js';
+import type { ConnectorConfig } from './types.js';
 import {
   connectorAdapterForSource,
   supportedConnectorSources,

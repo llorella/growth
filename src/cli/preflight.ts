@@ -5,7 +5,7 @@ import { Store } from '../lib/store.js';
 import { GrowthError } from '../lib/envelope.js';
 import { readProjectProfile } from '../lib/project-profile.js';
 import { resolveAppUrl } from '../lib/app-url.js';
-import { listConnectors } from '../lib/connectors.js';
+import { listConnectors } from '../connectors/persistence.js';
 import { resolvePreflightPlan } from '../core/preflight/plan.js';
 import {
   planWarnings,

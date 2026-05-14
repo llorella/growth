@@ -1,5 +1,6 @@
 import { GrowthError } from '../lib/envelope.js';
-import { getConnector, type ConnectorConfig } from '../lib/connectors.js';
+import { readConnector } from './persistence.js';
+import type { ConnectorConfig } from './types.js';
 import {
   connectorAdapterForImportProvider,
   supportedConnectorImportProviders,
@@ -28,7 +29,7 @@ export async function importConnectorFromProvider(
   }
 
   const source = adapter.defaultSource;
-  const existing = await getConnector(root, source);
+  const existing = await readConnector(root, source);
   if (existing && !opts.overwrite) {
     throw new GrowthError('already_exists', `Connector "${source}" already exists. Pass --yes to overwrite it.`);
   }

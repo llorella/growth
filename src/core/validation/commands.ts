@@ -1,6 +1,6 @@
 import { promises as fs } from 'node:fs';
 import { assertConnectorCoverage } from '../../connectors/coverage.js';
-import { listConnectors } from '../../lib/connectors.js';
+import { listConnectors } from '../../connectors/persistence.js';
 import { GrowthError } from '../../lib/envelope.js';
 import { paths } from '../../lib/paths.js';
 import { Store } from '../../lib/store.js';

@@ -1,5 +1,31 @@
 import type { Experiment, ExperimentEvent } from '../core/experiment/types.js';
-import type { ConnectorConfig } from '../lib/connectors.js';
+
+export interface ConnectorMapping {
+  framework_event?: string;
+  payload_paths?: Record<string, string>;
+  payload_static?: Record<string, unknown>;
+}
+
+export interface ConnectorConfig {
+  source: string;
+  kind: 'posthog' | 'segment' | 'stripe' | 'native-app' | 'warehouse' | 'custom';
+  user_id_path?: string;
+  anonymous_id_path?: string;
+  experiment_id_path?: string;
+  variant_id_path?: string;
+  event_name_path?: string;
+  idempotency_key_path?: string;
+  timestamp_path?: string;
+  posthog?: {
+    host?: string;
+    project_id?: string | number;
+    api_key_env?: string;
+  };
+  local?: {
+    events_file: string;
+  };
+  mappings: Record<string, ConnectorMapping>;
+}
 
 export type ConnectorEvidenceSource = 'posthog' | 'local_jsonl';
 export type ConnectorCapabilityName = 'telemetry_write' | 'provider_pull' | 'local_synthetic';

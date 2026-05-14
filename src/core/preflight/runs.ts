@@ -19,7 +19,7 @@ import {
   synthesizeReportsFromEvents,
 } from './reports.js';
 import type { PreflightAudit, PreflightReportSummary } from './types.js';
-import { listConnectors } from '../../lib/connectors.js';
+import { listConnectors } from '../../connectors/persistence.js';
 import { preferredPullSource, providerBackedConnector } from './packets.js';
 
 const ajv = new (Ajv2020 as unknown as { new (opts: object): Ajv2020 })({

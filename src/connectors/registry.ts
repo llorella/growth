@@ -1,4 +1,4 @@
-import type { ConnectorConfig } from '../lib/connectors.js';
+import type { ConnectorConfig } from './types.js';
 import { localAdapter } from './local/adapter.js';
 import { postHogAdapter } from './posthog/adapter.js';
 import type { ConnectorAdapter } from './types.js';

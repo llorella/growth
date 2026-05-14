@@ -1,4 +1,4 @@
-import type { ConnectorConfig } from '../../lib/connectors.js';
+import type { ConnectorConfig } from '../types.js';
 import { isEnvReference } from '../../lib/connector-catalog.js';
 import { readEnvValue } from '../../lib/env-files.js';
 import {

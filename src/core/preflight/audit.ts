@@ -1,5 +1,5 @@
 import { Store } from '../../lib/store.js';
-import { listConnectors } from '../../lib/connectors.js';
+import { listConnectors } from '../../connectors/persistence.js';
 import { connectorAdapterFor } from '../../connectors/registry.js';
 import type { ExperimentEvent, GrowthRun } from '../experiment/types.js';
 import {

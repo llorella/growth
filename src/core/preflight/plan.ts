@@ -2,7 +2,7 @@ import type { Experiment } from '../experiment/types.js';
 import { connectorAdapterFor } from '../../connectors/registry.js';
 import type { ConnectorAdapter, ConnectorCapabilityStatus } from '../../connectors/types.js';
 import { defaultAppUrlForFramework } from '../../lib/app-url.js';
-import type { ConnectorConfig } from '../../lib/connectors.js';
+import type { ConnectorConfig } from '../../connectors/types.js';
 import type { ProjectProfile } from '../../lib/project-profile.js';
 import {
   preflightCoverage,

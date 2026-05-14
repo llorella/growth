@@ -1,6 +1,6 @@
 import type { Experiment } from '../core/experiment/types.js';
 import { requiredConnectorEvents } from '../lib/connector-catalog.js';
-import type { ConnectorConfig } from '../lib/connectors.js';
+import type { ConnectorConfig } from './types.js';
 import { GrowthError } from '../lib/envelope.js';
 import { connectorAdapterFor } from './registry.js';
 
