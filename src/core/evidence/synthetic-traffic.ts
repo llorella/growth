@@ -17,7 +17,7 @@ export const SYNTHETIC_TRAFFIC_QUERY_PARAMS = [
   {
     name: SYNTHETIC_TRAFFIC_FIELDS.agentGenerated,
     value: 'true',
-    meaning: 'Marks browser-agent traffic so analysis can keep it separate from real users.',
+    meaning: 'Marks browser-agent traffic so it stays separate from real users.',
   },
   {
     name: SYNTHETIC_TRAFFIC_FIELDS.agentRunId,
@@ -42,17 +42,6 @@ export const SYNTHETIC_TRAFFIC_PAYLOAD_PATHS = {
 } as const;
 
 export type TrafficKind = 'real-user' | 'synthetic';
-
-export function syntheticTrafficPayload(agentRunId: string): Record<string, unknown> {
-  return {
-    [SYNTHETIC_TRAFFIC_FIELDS.agentGenerated]: true,
-    [SYNTHETIC_TRAFFIC_FIELDS.agentRunId]: agentRunId,
-  };
-}
-
-export function syntheticSimulationRunId(seed: string): string {
-  return `simulate_${seed}`;
-}
 
 export function buildSyntheticTrafficUrl(
   appUrl: string,

@@ -4,7 +4,6 @@ import {
   buildPreflightAudit,
   PREFLIGHT_AUDIT_CHECKS,
 } from '../dist/core/preflight/audit-policy.js';
-import { syntheticTrafficPayload } from '../dist/core/evidence/synthetic-traffic.js';
 
 test('preflight audit policy passes provider-backed complete evidence', () => {
   const audit = buildPreflightAudit({
@@ -193,7 +192,7 @@ function event(name, variant, agentRunId) {
     variant_id: variant,
     event: name,
     timestamp: '2026-01-01T00:01:00.000Z',
-    payload: syntheticTrafficPayload(agentRunId),
+    payload: { agent_generated: true, agent_run_id: agentRunId },
   };
 }
 

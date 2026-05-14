@@ -1731,26 +1731,6 @@ test('pull cursors are scoped by source and experiment', () => {
   }
 });
 
-test('simulate clear requires confirmation and default append is non-destructive', () => {
-  const root = tempRoot();
-  try {
-    run(root, ['init', '--json']);
-    run(root, ['experiment', 'create', 'my-test', '--template', 'conversion-test', '--json']);
-    run(root, ['simulate', 'my-test', '--days', '1', '--daily', '10', '--json']);
-    const first = run(root, ['status', '--json']).data.counts.events;
-    const rejected = run(root, ['simulate', 'my-test', '--clear', '--json'], { status: 1 });
-    assert.equal(rejected.error.code, 'confirmation_required');
-    run(root, ['simulate', 'my-test', '--days', '1', '--daily', '10', '--json']);
-    const second = run(root, ['status', '--json']).data.counts.events;
-    assert.ok(second > first);
-    run(root, ['--yes', 'simulate', 'my-test', '--days', '1', '--daily', '10', '--clear', '--json']);
-    const cleared = run(root, ['status', '--json']).data.counts.events;
-    assert.ok(cleared <= second);
-  } finally {
-    cleanup(root);
-  }
-});
-
 test('connector state records custom env names and stripe projects import', () => {
   const root = tempRoot();
   try {
