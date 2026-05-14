@@ -357,18 +357,6 @@ Every synthetic event must be labeled:
 }
 ```
 
-### 5.7 Analysis Must Be Conservative
-
-`growth analyze` should:
-
-- compare treatment variants against control
-- treat guardrails as blocking
-- report insufficient data clearly
-- distinguish real user segments from synthetic agent segments
-- avoid recommending ship from synthetic-only evidence
-- include next steps
-- include caveats and warnings
-
 ## 6. Repository Artifacts
 
 Default layout:
@@ -653,8 +641,7 @@ Agent usage guide:
     "growth preflight prepare <id> --agents 4 --browser --json",
     "growth preflight pull <run_id> --source posthog --json",
     "growth preflight audit <run_id> --json",
-    "growth pull <id> --source posthog --json",
-    "growth analyze <id> --json"
+    "growth pull <id> --source posthog --json"
   ]
 }
 ```
@@ -804,7 +791,7 @@ For a Next.js app, example output:
   "suggested_files": [
     "src/lib/events.ts",
     "src/app/api/events/route.ts",
-    "src/lib/assignment.ts"
+    "src/lib/experiment.ts"
   ],
   "next_steps": [
     "Edit the app to satisfy the event contract.",
@@ -915,41 +902,7 @@ Output:
 }
 ```
 
-### 7.13 Analyze
-
-```bash
-growth analyze <experiment_id> --json
-growth analyze <experiment_id> --segment real-users --json
-growth analyze <experiment_id> --segment agent-generated --json
-growth analyze <experiment_id> --segment all --json
-```
-
-Recommendations:
-
-- `ship_treatment`
-- `keep_running`
-- `stop_inconclusive`
-- `rollback`
-- `guardrail_breach`
-- `instrumentation_incomplete`
-- `synthetic_only_no_ship`
-
-If analysis only contains agent-generated traffic, the action must not be `ship_treatment`. Instead:
-
-```json
-{
-  "action": "synthetic_only_no_ship",
-  "confidence": "high",
-  "reasoning": "Only agent-generated synthetic traffic is present. Use this result to validate instrumentation and UX, not to make a production ship decision.",
-  "next_steps": [
-    "Start the experiment for real users.",
-    "Keep monitoring guardrails.",
-    "Use preflight reports for qualitative UX issues."
-  ]
-}
-```
-
-### 7.14 Preflight
+### 7.13 Preflight
 
 ```bash
 growth preflight prepare <experiment_id> --agents 4 --browser --json
@@ -1370,7 +1323,7 @@ Rules:
 - Use `growth instrumentation plan <id> --json` before editing app code.
 - Use `growth instrumentation verify <id> --json` after editing app code.
 - Use `growth preflight prepare`, not ad hoc browser-agent prompts.
-- Use `growth pull` and `growth analyze`; do not rely on raw analytics screenshots.
+- Use `growth pull`; do not rely on raw analytics screenshots.
 - Never treat agent-generated traffic as real-user evidence.
 ```
 
