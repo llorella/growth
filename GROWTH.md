@@ -40,14 +40,13 @@ Optional bounded agents exercise the app like synthetic users and generate label
 
 Current implementation snapshot:
 
-- CLI commands exist for `init`, `status`, `schema`, `catalog`, `experiment`, `instrumentation`, `connector`, `env`, `pull`, `simulate`, `preflight`, `analyze`, `power-calc`, and MCP tool wrapping.
+- CLI commands exist for `init`, `status`, `schema`, `catalog`, `experiment`, `instrumentation`, `connector`, `env`, `pull`, `preflight`, `power-calc`, and MCP tool wrapping.
 - `preflight` is the current name for browser-agent synthetic validation. Older `cohort` command names are not part of the current command surface.
 - Synthetic traffic is labeled by event payload properties `agent_generated: true` and non-empty `agent_run_id`; preflight URLs carry `agent_generated`, `agent_run_id`, `experiment_id`, and forced-branch query param `variant`.
 - Emitted app events use `variant_id` as the canonical variant property. The `variant` query param exists only to force a synthetic preflight branch.
 - Event windows are half-open: `after <= timestamp < before`. Missing or invalid timestamps do not count as preflight evidence.
 - Preflight coverage is derived from metric events, denominator events, and explicit instrumentation events. Packet scenarios may narrow what one agent tries, but the audit checks the full required coverage surface.
 - A local-only successful preflight returns `ready_for_provider_preflight`; a provider-backed synthetic pull can return `provider_preflight_passed`; neither is a real-user ship decision.
-- Analysis policy is separated from evidence loading and only `growth analyze --segment real-users` can support production ship decisions.
 - Connector defaults, auth env conventions, required scopes, mapping conventions, and coverage rules live in the connector catalog.
 
 The first concrete loop:
@@ -152,59 +151,7 @@ For `growth`, the Wizard lesson applies to instrumentation and synthetic preflig
 
 ### 2.3 Every / every-exp Lesson
 
-The Every work already prototyped the combined pattern.
-
-`~/every-exp` contributed:
-
-- strict experiment JSON Schema
-- CLI-first commands with `--json`
-- MCP server exposing experiment tools
-- deterministic sticky assignment
-- file-backed experiment store
-- connector JSON files for PostHog, Segment, Stripe, native apps
-- statistical analysis with primary, secondary, and guardrail metrics
-- structured recommendations such as:
-  - `ship_treatment`
-  - `keep_running`
-  - `stop_inconclusive`
-  - `rollback`
-  - `guardrail_breach`
-
-`~/every` contributed:
-
-- real product UI with control and treatment flows
-- PostHog event capture through a first-party proxy
-- typed event taxonomy
-- deterministic user variant assignment
-- `agent_generated` and `agent_run_id` event properties
-- browser-agent exercise of onboarding flows
-- a product surface agents could use without inspecting source
-
-The sessions contributed the key insight:
-
-```text
-parallel browser agents naturally became synthetic first-time users,
-generated real PostHog events, and closed the loop back into the deterministic
-experiment framework.
-```
-
-That should not remain an ad hoc trick. It should become a first-class `growth` concept: a synthetic preflight run.
-
-### 2.4 Runbook Lesson
-
-Runbook is useful as an internal architecture pattern:
-
-- deterministic runner
-- playbook skill
-- status/read model
-- workflow steps
-- approvals
-- local MCP
-- audit logs
-- agent packets
-- verification hooks
-
-But leading with Runbook is too meta right now. `growth` should be the product. Runbook can influence implementation details, but the user should experience a concrete growth experimentation tool.
+The Every prototype proved the key insight: parallel browser agents naturally become synthetic first-time users, generate real analytics events, and close the loop back into the experiment framework. That is now a first-class `growth` concept: a synthetic preflight run.
 
 ## 3. Product Positioning
 
@@ -1467,46 +1414,11 @@ Tools:
 - `growth_preflight_dry_run`
 - `growth_preflight_pull`
 - `growth_preflight_audit`
-- `growth_analyze`
-
 Every MCP output should still be structured JSON.
 
-## 12. Framework Detection
+## 12. Security And Safety
 
-`growth init` and `growth status` should detect common frameworks:
-
-- Next.js App Router
-- Next.js Pages Router
-- React/Vite
-- Remix
-- Astro
-- SvelteKit
-- Rails
-- Django
-- Flask/FastAPI
-- generic Node
-- unknown
-
-Detection should affect:
-
-- instrumentation plan suggestions
-- package manager commands
-- event proxy conventions
-- env var names
-- likely file paths
-- verification strategy
-
-For Next.js App Router:
-
-- app event proxy likely lives under `src/app/api/events/route.ts`
-- client instrumentation likely lives under `src/lib/events.ts`
-- provider wrapper likely lives under `src/components/*Provider.tsx`
-- reverse proxy can be configured in `next.config.ts`
-- browser-agent preflight target is usually the local dev server URL
-
-## 13. Security And Safety
-
-### 13.1 Protected Files
+### 12.1 Protected Files
 
 Default protected globs:
 
@@ -1526,7 +1438,7 @@ growth env set --key POSTHOG_ANALYTICS_API_KEY --stdin --json
 growth connector auth check --json
 ```
 
-### 13.2 Bash Policy For Launched Agents
+### 12.2 Bash Policy For Launched Agents
 
 If `growth` later launches agents directly, default allowed commands should be narrow:
 
@@ -1543,7 +1455,7 @@ Deny:
 - `grep .env*`
 - direct state mutation
 
-### 13.3 Connector Auth
+### 12.3 Connector Auth
 
 PostHog auth preflight should check:
 
@@ -1552,7 +1464,7 @@ PostHog auth preflight should check:
 
 It should fail before a long run if the app's PostHog analytics key or host is missing.
 
-## 14. Idempotency
+## 13. Idempotency
 
 This is a mandatory improvement over the current `every-exp` prototype.
 
@@ -1588,73 +1500,16 @@ Overlapping windows should warn:
 
 With `--json --no-interactive`, overlapping pulls should fail unless `--yes` is passed.
 
-## 15. Analysis Semantics
+## 14. Example End-To-End Workflow
 
-### 15.1 Primary Metric
-
-The primary metric decides ship/no-ship for real traffic.
-
-### 15.2 Secondary Metrics
-
-Secondary metrics explain the primary result. They do not override primary unless encoded as guardrails.
-
-### 15.3 Guardrails
-
-Guardrails run before ship recommendations.
-
-If a guardrail moves adversely and significantly:
-
-```json
-{
-  "action": "guardrail_breach",
-  "confidence": "high"
-}
-```
-
-If a guardrail is adverse but not significant:
-
-- include warning
-- reduce confidence
-- recommend continued monitoring
-
-### 15.4 Insufficient Data
-
-For very small samples, do not pretend.
-
-Return:
-
-```json
-{
-  "action": "keep_running",
-  "confidence": "low",
-  "reasoning": "Need at least 30 users per variant. Currently 2 / 5."
-}
-```
-
-### 15.5 Synthetic Segment
-
-Agent-generated traffic can validate the machine:
-
-- assignment works
-- events fire
-- connector maps
-- analysis runs
-- qualitative UX issues surface
-
-It cannot validate the business hypothesis.
-
-`growth analyze --segment agent-generated` should make that explicit.
-
-## 16. Example End-To-End Workflow
-
-### 16.1 Initialize
+### 14.1 Initialize
 
 ```bash
 growth init --json
 growth status --json
 ```
 
-### 16.2 Create Experiment
+### 14.2 Create Experiment
 
 ```bash
 growth power-calc --baseline 0.2 --mde 0.2 --daily-traffic 500 --json
@@ -1662,7 +1517,7 @@ growth schema experiment --json
 growth experiment create demand-driven-onboarding --from-json '<experiment json>' --json
 ```
 
-### 16.3 Plan Instrumentation
+### 14.3 Plan Instrumentation
 
 ```bash
 growth instrumentation plan demand-driven-onboarding --json
@@ -1686,7 +1541,7 @@ Then:
 growth instrumentation verify demand-driven-onboarding --json
 ```
 
-### 16.4 Configure PostHog
+### 14.4 Configure PostHog
 
 ```bash
 growth connector add posthog --json
@@ -1694,7 +1549,7 @@ growth connector auth check posthog --json
 growth connector validate posthog --json
 ```
 
-### 16.5 Prepare Preflight
+### 14.5 Prepare Preflight
 
 ```bash
 growth preflight prepare demand-driven-onboarding --agents 4 --browser --json
@@ -1702,7 +1557,7 @@ growth preflight prepare demand-driven-onboarding --agents 4 --browser --json
 
 The outer agent launches the prepared packets using the available runner.
 
-### 16.6 Complete Preflight And Pull Events
+### 14.6 Complete Preflight And Pull Events
 
 ```bash
 growth preflight complete preflight_20260511T120000Z --json
@@ -1710,153 +1565,7 @@ growth preflight pull preflight_20260511T120000Z --source posthog --json
 growth preflight audit preflight_20260511T120000Z --json
 ```
 
-### 16.7 Analyze
-
-```bash
-growth analyze demand-driven-onboarding --segment agent-generated --json
-growth preflight audit preflight_20260511T120000Z --markdown
-```
-
-Expected recommendation for synthetic-only data:
-
-```text
-Instrumentation valid, app flow exercised, synthetic-only no-ship.
-```
-
-### 16.8 Production Run
-
-```bash
-growth experiment start demand-driven-onboarding --json
-growth pull demand-driven-onboarding --source posthog --after 2026-04-30T00:00:00Z --json
-growth analyze demand-driven-onboarding --segment real-users --json
-```
-
-## 17. MVP
-
-MVP should start from `every-exp` and add the missing control-plane hardening.
-
-### 17.1 Must Have
-
-- `growth init`
-- managed `.growth` state
-- standardized JSON envelope
-- `growth status --json`
-- strict experiment schema
-- experiment create/list/show/start/stop
-- power calculation
-- PostHog connector
-- connector validation
-- PostHog auth preflight
-- idempotent pull
-- analysis recommendations
-- agent skill scaffold
-- `growth llm-context --json`
-- instrumentation plan
-- preflight prepare
-- audit log
-
-### 17.2 Should Have
-
-- Segment connector
-- Stripe connector
-- native-app connector
-- MCP server
-- instrumentation verify
-- generated browser-agent report schema
-- run report markdown
-- event taxonomy validation
-- overlapping pull detection
-
-### 17.3 Later
-
-- direct `--backend claude-code`
-- direct `--backend codex`
-- TUI
-- dashboard
-- Slack notifications
-- auto-stop daemon
-- warehouse replay
-- Bayesian or sequential testing
-- multi-experiment interaction checks
-- identity stitching
-- signed onboarding token helpers
-
-## 18. Implementation Plan
-
-### Phase 1: Control Plane Foundation
-
-1. Create package and CLI.
-2. Implement JSON envelope.
-3. Implement `.growth` store.
-4. Implement audit log.
-5. Implement schemas.
-6. Implement `init`, `status`, `schema`, `llm-context`.
-7. Scaffold `.agents/skills/growth`.
-
-### Phase 2: Experiment Core
-
-1. Port `every-exp` experiment types.
-2. Port schema validation.
-3. Port deterministic assignment.
-4. Port sample-size calculation.
-5. Port analysis engine.
-6. Add conservative synthetic-only recommendation.
-
-### Phase 3: Connectors And Pulls
-
-1. Port connector mapper.
-2. Add idempotency.
-3. Add PostHog pull.
-4. Add auth preflight and scope errors.
-5. Add pull record state.
-6. Add overlapping-window warnings.
-
-### Phase 4: Instrumentation Planning
-
-1. Add framework detection.
-2. Add Next.js instrumentation planner.
-3. Add event contract generation.
-4. Add static verification stubs.
-5. Add sample event verification.
-
-### Phase 5: Preflight Prepare
-
-1. Define run model.
-2. Generate agent packets.
-3. Generate report schemas.
-4. Generate launch manual.
-5. Add report attachment.
-6. Add preflight pull by run event window.
-7. Add preflight audit report.
-
-### Phase 6: MCP
-
-1. Mirror CLI tools.
-2. Add resources for schemas and conventions.
-3. Ensure every response is structured JSON.
-
-### Phase 7: Optional Agent Launch Backends
-
-1. Add manual backend.
-2. Add dry-run backend.
-3. Add Claude Code backend.
-4. Add Codex backend if useful.
-5. Keep backend packets compatible with existing run state.
-
-## 19. Open Questions
-
-1. Should experiment configs live under `.growth/experiments` by default, or a public `experiments/` directory?
-2. Should `growth` include a local event ingestion server in MVP, or only pull from PostHog?
-3. How much framework-specific instrumentation verification is realistic without becoming PostHog Wizard?
-4. Should `growth connector add posthog` create PostHog insights/dashboards, or only configure event pull?
-5. Should the first launch backend be `manual` only?
-6. Should preflight runs support forced variants, or should forced variants be considered a special test mode?
-7. How should `growth` model identity stitching across anonymous and logged-in events?
-8. Should event taxonomy be global per repo or per experiment?
-9. Should `growth` integrate with existing experimentation platforms, or remain independent?
-10. What is the minimum credible production analysis method before adding sequential/Bayesian testing?
-
-## 20. Strong Opinions
+## 15. Strong Opinions
 
 1. `growth` should be the product, not Runbook.
 2. Runbook should remain an internal substrate until multiple vertical tools prove the abstraction.
@@ -1869,6 +1578,6 @@ MVP should start from `every-exp` and add the missing control-plane hardening.
 9. `growth` should own pull idempotency before real usage.
 10. `growth` should use skills as guidance, not as the only source of truth.
 
-## 21. One-Line Product Definition
+## 16. One-Line Product Definition
 
 `growth` is Stripe Projects for growth experiments, with a PostHog Wizard-style agent harness available when product behavior has to be instrumented or exercised.
