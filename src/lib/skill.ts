@@ -68,29 +68,10 @@ This is a reference shape, not a required file layout. Prefer the host app's exi
 ## Event Envelope
 
 Growth will choose the evidence source in \`growth preflight plan <id> --json\`.
-For PostHog apps, use the app's existing PostHog conventions. If Growth
-selects a local JSONL fast loop, the built-in local connector expects
-PostHog-style JSONL rows:
-
-\`\`\`json
-{
-  "event": "experiment_viewed",
-  "properties": {
-    "event_id": "evt_unique_id",
-    "experiment_id": "my-experiment",
-    "variant_id": "control",
-    "user_id": "user_123",
-    "anonymous_id": "anon_123",
-    "session_id": "session_123",
-    "timestamp": "2026-05-01T00:00:00.000Z",
-    "agent_generated": false,
-    "agent_run_id": null
-  }
-}
-\`\`\`
-
-Append one JSON object per line only when the preflight plan or connector config
-selects local JSONL.
+Use the \`connector_event_shapes\` returned by \`growth instrumentation plan <id> --json\`;
+do not assume a provider envelope or local JSONL shape from this reference.
+Append local JSONL only when the preflight plan or connector config selects it,
+and shape those rows from the selected connector config.
 
 ## Verification
 
@@ -171,11 +152,12 @@ const WORKFLOWS: Record<string, string> = {
 `,
   'pull-and-analyze.md': `# Pull And Analyze
 
-1. Run \`growth connector auth check posthog --json\`.
-2. If provider pull is blocked, run the returned \`growth connector auth setup posthog --json\` command and follow only Growth's safe setup commands.
-3. Run \`growth pull <id> --source posthog --after <iso> --json\`.
-4. Run \`growth analyze <id> --segment real-users --json\`.
-5. For synthetic traffic, run \`growth analyze <id> --segment agent-generated --json\`.
+1. Run \`growth preflight plan <id> --json\`.
+2. Follow the returned \`_next.command\`; do not choose a connector source yourself.
+3. If Growth returns a connector auth command, run that exact command and follow only Growth's safe setup commands.
+4. Pull with the source selected by Growth, using the window or timestamp Growth returned.
+5. Run \`growth analyze <id> --segment real-users --json\` only after provider-backed real-user evidence is available.
+6. For synthetic traffic, run \`growth analyze <id> --segment agent-generated --json\`.
 `,
   'cleanup-experiment.md': `# Cleanup Experiment
 

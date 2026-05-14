@@ -5,9 +5,9 @@ import { wrap, type RunCtx } from '../lib/runner.js';
 import { isInitialized, readShared, paths } from '../lib/state.js';
 import { Store } from '../lib/store.js';
 import { listConnectors } from '../lib/connectors.js';
-import { connectorApiKeyEnv } from '../lib/connector-catalog.js';
-import { detectFramework } from '../lib/framework.js';
+import { connectorAdapterFor } from '../connectors/registry.js';
 import { readEnvValue } from '../lib/env-files.js';
+import { projectProfileUnknowns, readProjectProfile } from '../lib/project-profile.js';
 
 async function countLines(file: string): Promise<number> {
   try {
@@ -52,7 +52,8 @@ export function registerStatus(program: Command, ctx: RunCtx): void {
         const root = ctx.getRoot();
         const p = paths(root);
         const initialized = await isInitialized(root);
-        const framework = initialized ? (await readShared(root))?.project.framework ?? (await detectFramework(root)) : await detectFramework(root);
+        const profile = initialized ? await readProjectProfile(root) : null;
+        const framework = profile?.framework?.id ?? 'unknown';
 
         if (!initialized) {
           return {
@@ -60,7 +61,7 @@ export function registerStatus(program: Command, ctx: RunCtx): void {
               initialized,
               root,
               framework,
-              framework_hint: { detected: framework, advisory_only: true },
+              framework_hint: { detected: framework, source: 'unconfigured', advisory_only: true },
               next_command: 'growth init --json',
             },
             humanText: `growth not initialized at ${root}. Run \`growth init\`.`,
@@ -86,7 +87,8 @@ export function registerStatus(program: Command, ctx: RunCtx): void {
 
         const experiment = experimentId ? await store.getExperiment(experimentId) : null;
         const connectorReadiness = await Promise.all(connectors.map(async (c) => {
-          const apiKeyEnv = connectorApiKeyEnv(c);
+          const adapter = connectorAdapterFor(c);
+          const apiKeyEnv = adapter?.authEnv(c);
           return {
             source: c.source,
             kind: c.kind,
@@ -99,7 +101,13 @@ export function registerStatus(program: Command, ctx: RunCtx): void {
           initialized,
           root,
           framework,
-          framework_hint: { detected: framework, advisory_only: true },
+          framework_hint: {
+            detected: framework,
+            source: profile?.framework?.source ?? 'unconfigured',
+            advisory_only: true,
+          },
+          project_profile: profile,
+          project_unknowns: profile ? projectProfileUnknowns(profile) : [],
           state: shared,
           counts: {
             experiments: experiments.length,

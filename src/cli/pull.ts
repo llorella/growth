@@ -1,8 +1,10 @@
 import type { Command } from 'commander';
 import { wrap, type RunCtx } from '../lib/runner.js';
 import { requireInitialized } from '../lib/gating.js';
-import { pull } from '../lib/pull.js';
-import { GrowthError } from '../lib/envelope.js';
+import {
+  pullExperimentCommand,
+  type PullExperimentCommandOptions,
+} from '../core/evidence/commands.js';
 
 export function registerPull(program: Command, ctx: RunCtx): void {
   program
@@ -15,30 +17,15 @@ export function registerPull(program: Command, ctx: RunCtx): void {
     .action(
       async (
         experimentId: string,
-        opts: { source: string; after?: string; before?: string; limit?: number },
+        opts: Omit<PullExperimentCommandOptions, 'allowOverlap'>,
       ) => {
         await wrap('growth pull', ctx, async () => {
-          await requireInitialized(ctx.getRoot());
-          if (!opts.source) {
-            throw new GrowthError('missing_source', 'pull requires --source <name>.');
-          }
-          const result = await pull(ctx.getRoot(), {
-            experimentId,
-            source: opts.source,
-            after: opts.after,
-            before: opts.before,
-            limit: opts.limit,
+          const root = ctx.getRoot();
+          await requireInitialized(root);
+          return pullExperimentCommand(root, experimentId, {
+            ...opts,
             allowOverlap: ctx.assumeYes(),
           });
-          return {
-            data: result,
-            humanText: [
-              `Pulled ${experimentId} from ${result.source} window ${result.window.after} -> ${result.window.before}`,
-              `  raw: ${result.raw_fetched}  emitted: ${result.emitted}  deduped: ${result.deduped}`,
-              `  dropped: ${result.dropped.map((d) => `${d.reason}=${d.count}`).join(', ') || 'none'}`,
-            ].join('\n'),
-            nextSteps: [`growth analyze ${experimentId} --json`],
-          };
         });
       },
     );

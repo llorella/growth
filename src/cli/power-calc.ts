@@ -1,6 +1,6 @@
 import type { Command } from 'commander';
 import { wrap, type RunCtx } from '../lib/runner.js';
-import { requiredSampleSize } from '../domain/stats.js';
+import { requiredSampleSize } from '../core/experiment/stats.js';
 
 export function registerPowerCalc(program: Command, ctx: RunCtx): void {
   program

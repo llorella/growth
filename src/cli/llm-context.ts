@@ -9,9 +9,9 @@ import { requireInitialized } from '../lib/gating.js';
 import { Store } from '../lib/store.js';
 import { listConnectors } from '../lib/connectors.js';
 import { readShared } from '../lib/state.js';
-import { connectorSchema, eventTaxonomySchema, experimentSchema, preflightReportSchema } from '../domain/schema.js';
+import { connectorSchema, eventTaxonomySchema, experimentSchema, preflightReportSchema } from '../core/experiment/schema.js';
 import { CATALOG } from '../lib/defaults.js';
-import { detectFramework } from '../lib/framework.js';
+import { projectProfileUnknowns, readProjectProfile } from '../lib/project-profile.js';
 import { resolveAppUrl } from '../lib/app-url.js';
 
 const CONVENTIONS = [
@@ -54,12 +54,21 @@ export function registerLlmContext(program: Command, ctx: RunCtx): void {
           listConnectors(root),
           store.listTemplates(),
         ]);
-        const detectedFramework = shared?.project.framework ?? (await detectFramework(root));
+        const projectProfile = await readProjectProfile(root);
+        const detectedFramework = projectProfile.framework?.id ?? 'unknown';
         const appUrl = await resolveAppUrl(root, detectedFramework);
         return {
           data: {
             framework: { name: 'growth', version: ctx.version, root },
-            project_hints: { framework: { detected: detectedFramework, advisory_only: true } },
+            project_profile: projectProfile,
+            project_unknowns: projectProfileUnknowns(projectProfile),
+            project_hints: {
+              framework: {
+                detected: detectedFramework,
+                source: projectProfile.framework?.source ?? 'unconfigured',
+                advisory_only: true,
+              },
+            },
             local_servers: { app_url: appUrl },
             state: { shared },
             schemas: {
@@ -71,6 +80,10 @@ export function registerLlmContext(program: Command, ctx: RunCtx): void {
             catalog: CATALOG,
             commands: [
               'growth status --json',
+              'growth project show --json',
+              'growth project configure --framework <id> --app-url <url> --json',
+              'growth project route add <id> --path <path> --json',
+              'growth project auth-context add <id> --requires-session --json',
               'growth schema experiment --json',
               'growth experiment create <id> --from-file <spec.json> --json',
               'growth experiment implementation set <id> --variant <variant_id> --branch <branch> --worktree <path> --json',
@@ -81,7 +94,7 @@ export function registerLlmContext(program: Command, ctx: RunCtx): void {
               'growth preflight prepare <id> --agents 4 --browser --app-url <packet_app_url> --json',
               'growth preflight pull <run_id> --source <provider> --json',
               'growth preflight audit <run_id> --json',
-              'growth pull <id> --source posthog --after <iso> --json',
+              'growth pull <id> --source <source> --after <iso> --json',
               'growth analyze <id> --segment real-users --json',
             ],
             experiments: experiments.map((e) => ({

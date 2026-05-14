@@ -1,4 +1,4 @@
-import type { GrowthRun } from '../domain/types.js';
+import type { GrowthRun } from '../experiment/types.js';
 import { PREFLIGHT_AUDIT_CHECKS } from './audit-policy.js';
 import type { PreflightAudit } from './types.js';
 

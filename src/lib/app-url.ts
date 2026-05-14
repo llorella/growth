@@ -1,4 +1,5 @@
 import type { FrameworkId } from './framework.js';
+import { readProjectProfile } from './project-profile.js';
 import { patchLocal, readLocal } from './state.js';
 
 export function defaultAppUrlForFramework(framework: FrameworkId | string): string {
@@ -36,5 +37,7 @@ export async function resolveAppUrl(root: string, framework: FrameworkId | strin
   }
   if (process.env.PORTLESS_URL) return process.env.PORTLESS_URL;
   const local = await readLocal(root);
-  return local.local_servers?.app_url ?? defaultAppUrlForFramework(framework);
+  if (local.local_servers?.app_url) return local.local_servers.app_url;
+  const profile = await readProjectProfile(root);
+  return profile.app_urls.default ?? defaultAppUrlForFramework(framework);
 }

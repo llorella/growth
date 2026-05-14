@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildAnalysis } from '../dist/domain/analysis-policy.js';
-import { syntheticTrafficPayload } from '../dist/domain/synthetic-traffic.js';
+import { buildAnalysis } from '../dist/core/analysis/analysis-policy.js';
+import { syntheticTrafficPayload } from '../dist/core/evidence/synthetic-traffic.js';
 
 test('analysis policy filters in-memory evidence by segment', () => {
   const experiment = analysisExperiment();

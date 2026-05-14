@@ -10,8 +10,8 @@ import {
   paths,
 } from '../lib/state.js';
 import { writeSkill } from '../lib/skill.js';
-import { detectFramework } from '../lib/framework.js';
 import { DEFAULT_EVENT_TAXONOMY } from '../lib/defaults.js';
+import { parseFrameworkOption } from './framework-option.js';
 
 const DOT_GITIGNORE = `# growth local-only artifacts
 state.local.json
@@ -24,14 +24,14 @@ export function registerInit(program: Command, ctx: RunCtx): void {
   program
     .command('init')
     .description('Initialize growth in this directory.')
-    .option('--framework <id>', 'Override framework detection.')
+    .option('--framework <id>', 'Set the project profile framework id, for example nextjs-app-router or react-vite.')
     .option('--bare', 'Only create .growth state; skip agent guidance.')
     .action(async (opts: { framework?: string; bare?: boolean }) => {
       await wrap('growth init', ctx, async () => {
         const root = ctx.getRoot();
         const p = paths(root);
         const already = await isInitialized(root);
-        const framework = opts.framework ?? (await detectFramework(root));
+        const framework = opts.framework ? parseFrameworkOption(opts.framework) : 'unknown';
 
         await fs.mkdir(p.dot, { recursive: true });
         await fs.mkdir(p.dataDir, { recursive: true });

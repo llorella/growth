@@ -1,13 +1,13 @@
-import type { ConnectorConfig } from './connectors.js';
+import type { ConnectorConfig } from '../../lib/connectors.js';
+import { isEnvReference } from '../../lib/connector-catalog.js';
+import { readEnvValue } from '../../lib/env-files.js';
 import {
   POSTHOG_DEFAULT_API_KEY_ENV,
   POSTHOG_DEFAULT_HOST,
   POSTHOG_DEFAULT_PROJECT_ID,
-  connectorApiKeyEnv,
-  connectorRequiredScopes,
-  isEnvReference,
-} from './connector-catalog.js';
-import { readEnvValue } from './env-files.js';
+  POSTHOG_REQUIRED_SCOPES,
+  postHogApiKeyEnv,
+} from './config.js';
 
 export type PostHogCapabilityName = 'telemetry_write' | 'provider_pull';
 export type PostHogMissingRequirement = 'api_key' | 'project_id';
@@ -41,7 +41,7 @@ export async function postHogCapabilityStatus(
   root: string,
   connector: ConnectorConfig,
 ): Promise<PostHogCapabilityStatus> {
-  const apiKeyEnv = connectorApiKeyEnv(connector) ?? POSTHOG_DEFAULT_API_KEY_ENV;
+  const apiKeyEnv = postHogApiKeyEnv(connector) ?? POSTHOG_DEFAULT_API_KEY_ENV;
   const apiKeyPresent = !!(await readEnvValue(root, apiKeyEnv));
   const projectIdRef = postHogProjectIdReference(connector);
   const projectIdEnv = isEnvReference(projectIdRef) ? projectIdRef : undefined;
@@ -65,7 +65,7 @@ export async function postHogCapabilityStatus(
     project_id_configured: connector.posthog?.project_id !== undefined,
     ...(projectIdEnv ? { project_id_env: projectIdEnv } : {}),
     project_id_present: projectIdPresent,
-    required_scopes: connectorRequiredScopes(connector.kind),
+    required_scopes: [...POSTHOG_REQUIRED_SCOPES],
     capabilities: {
       telemetry_write: {
         ready: telemetryMissing.length === 0,

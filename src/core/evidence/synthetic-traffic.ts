@@ -1,4 +1,4 @@
-import type { ExperimentEvent } from './types.js';
+import type { ExperimentEvent } from '../experiment/types.js';
 
 export const SYNTHETIC_TRAFFIC_FIELDS = {
   agentGenerated: 'agent_generated',

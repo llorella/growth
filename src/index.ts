@@ -4,6 +4,7 @@ import type { RunCtx } from './lib/runner.js';
 
 import { registerInit } from './cli/init.js';
 import { registerStatus } from './cli/status.js';
+import { registerProject } from './cli/project.js';
 import { registerSchema } from './cli/schema.js';
 import { registerExperiments } from './cli/experiments.js';
 import { registerTemplates } from './cli/templates.js';
@@ -44,6 +45,7 @@ const ctx: RunCtx = {
 
 registerInit(program, ctx);
 registerStatus(program, ctx);
+registerProject(program, ctx);
 registerSchema(program, ctx);
 registerExperiments(program, ctx);
 registerTemplates(program, ctx);

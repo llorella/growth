@@ -5,7 +5,7 @@ import {
   containsTimestamp,
   filterByEventWindow,
   openEventWindow,
-} from '../dist/domain/event-window.js';
+} from '../dist/core/evidence/event-window.js';
 
 test('event windows are half-open', () => {
   const window = {

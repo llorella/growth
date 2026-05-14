@@ -1,12 +1,13 @@
-import { Store } from '../lib/store.js';
-import { listConnectors } from '../lib/connectors.js';
-import type { ExperimentEvent, GrowthRun } from '../domain/types.js';
+import { Store } from '../../lib/store.js';
+import { listConnectors } from '../../lib/connectors.js';
+import { connectorAdapterFor } from '../../connectors/registry.js';
+import type { ExperimentEvent, GrowthRun } from '../experiment/types.js';
 import {
   allLocalEvidenceWindow,
   filterByEventWindow,
   type EventWindowRejection,
-} from '../domain/event-window.js';
-import { isInSyntheticAgentScope } from '../domain/synthetic-traffic.js';
+} from '../evidence/event-window.js';
+import { isInSyntheticAgentScope } from '../evidence/synthetic-traffic.js';
 import { buildPreflightAudit } from './audit-policy.js';
 import { readLatestInstrumentationVerification, readReports } from './reports.js';
 import type { AuditPreflightOptions, PreflightAudit } from './types.js';
@@ -49,7 +50,7 @@ function filterEventsForPreflightRun(
 async function hasProviderBackedPull(root: string, run: GrowthRun): Promise<boolean> {
   const providerSources = new Set(
     (await listConnectors(root))
-      .filter((connector) => connector.source !== 'local' && connector.kind !== 'native-app')
+      .filter((connector) => connectorAdapterFor(connector)?.providerBacked === true)
       .map((connector) => connector.source),
   );
   return Object.keys(run.artifacts ?? {}).some((key) => {

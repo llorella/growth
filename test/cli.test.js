@@ -57,6 +57,133 @@ test('empty project guidance is schema-first rather than template-specific', () 
     const context = run(root, ['llm-context', '--json']);
     assert.equal(context._next.command, 'growth schema experiment --json');
     assert.equal(context.data.commands.some((command) => command.includes('conversion-test')), false);
+    assert.equal(context.data.commands.some((command) => command.includes('--source posthog')), false);
+    assert.equal(context.data.commands.some((command) => command.includes('--source <source>')), true);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('project profile commands persist explicit control-plane facts', () => {
+  const root = tempRoot();
+  try {
+    run(root, ['init', '--framework', 'unknown', '--json']);
+
+    const initial = run(root, ['project', 'show', '--json']);
+    assert.equal(initial.data.profile.framework.id, 'unknown');
+    assert.equal(initial.data.unknowns.some((unknown) => unknown.fact === 'framework'), true);
+    assert.equal(initial.data.unknowns.some((unknown) => unknown.fact === 'app_urls.default'), true);
+
+    const configured = run(root, [
+      'project',
+      'configure',
+      '--framework',
+      'react-vite',
+      '--app-url',
+      'http://localhost:4444',
+      '--json',
+    ]);
+    assert.equal(configured.data.profile.framework.id, 'react-vite');
+    assert.equal(configured.data.profile.framework.source, 'user');
+    assert.equal(configured.data.profile.app_urls.default, 'http://localhost:4444');
+
+    const route = run(root, ['project', 'route', 'add', 'onboarding', '--path', 'onboarding', '--json']);
+    assert.deepEqual(route.data.route, {
+      id: 'onboarding',
+      path: '/onboarding',
+      source: 'user',
+    });
+
+    const authContext = run(root, [
+      'project',
+      'auth-context',
+      'add',
+      'authenticated-user',
+      '--requires-session',
+      '--json',
+    ]);
+    assert.deepEqual(authContext.data.auth_context, {
+      id: 'authenticated-user',
+      requires_session: true,
+      source: 'user',
+    });
+
+    const status = run(root, ['status', '--json']);
+    assert.equal(status.data.framework, 'react-vite');
+    assert.equal(status.data.project_profile.app_urls.default, 'http://localhost:4444');
+
+    const context = run(root, ['llm-context', '--json']);
+    assert.equal(context.data.project_profile.framework.id, 'react-vite');
+    assert.equal(context.data.local_servers.app_url, 'http://localhost:4444');
+    assert.equal(context.data.commands.includes('growth project show --json'), true);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('project framework options canonicalize aliases and reject unsupported ids', () => {
+  const root = tempRoot();
+  try {
+    const init = run(root, ['init', '--framework', 'nextjs', '--json']);
+    assert.equal(init.data.framework, 'nextjs-app-router');
+
+    let profile = run(root, ['project', 'show', '--json']);
+    assert.equal(profile.data.profile.framework.id, 'nextjs-app-router');
+
+    const configured = run(root, ['project', 'configure', '--framework', 'vite', '--json']);
+    assert.equal(configured.data.profile.framework.id, 'react-vite');
+
+    const invalid = run(root, ['project', 'configure', '--framework', 'next-ish', '--json'], { status: 1 });
+    assert.equal(invalid.ok, false);
+    assert.equal(invalid.error.code, 'unsupported_framework');
+    assert.deepEqual(invalid.error.details.supported.includes('nextjs-app-router'), true);
+
+    profile = run(root, ['project', 'show', '--json']);
+    assert.equal(profile.data.profile.framework.id, 'react-vite');
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('init does not infer framework from package metadata', () => {
+  const root = tempRoot();
+  try {
+    writeFileSync(
+      path.join(root, 'package.json'),
+      JSON.stringify({ dependencies: { next: '^15.0.0', react: '^19.0.0' } }) + '\n',
+    );
+    mkdirSync(path.join(root, 'app'), { recursive: true });
+
+    const init = run(root, ['init', '--json']);
+    assert.equal(init.data.framework, 'unknown');
+    assert.equal(init.data.framework_hint.detected, 'unknown');
+
+    const profile = run(root, ['project', 'show', '--json']);
+    assert.equal(profile.data.profile.framework.id, 'unknown');
+    assert.equal(profile.data.unknowns.some((unknown) => unknown.fact === 'framework'), true);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('preflight runtime uses stored project profile instead of framework source detection', () => {
+  const root = tempRoot();
+  try {
+    run(root, ['init', '--framework', 'nextjs-app-router', '--json']);
+    writeFileSync(
+      path.join(root, 'package.json'),
+      JSON.stringify({ dependencies: { react: '^19.0.0', vite: '^8.0.0' } }) + '\n',
+    );
+    run(root, ['experiment', 'create', 'my-test', '--template', 'conversion-test', '--json']);
+
+    const profileBacked = run(root, ['preflight', 'prepare', 'my-test', '--agents', '1', '--json']);
+    assert.equal(profileBacked.data.framework_hint.detected, 'nextjs-app-router');
+    assert.equal(profileBacked.data.app_url, 'http://localhost:3000');
+
+    run(root, ['project', 'configure', '--framework', 'react-vite', '--json']);
+    const reconfigured = run(root, ['preflight', 'prepare', 'my-test', '--agents', '1', '--json']);
+    assert.equal(reconfigured.data.framework_hint.detected, 'react-vite');
+    assert.equal(reconfigured.data.app_url, 'http://localhost:5173');
   } finally {
     cleanup(root);
   }
@@ -108,7 +235,7 @@ test('core experiment flow labels simulated traffic as synthetic-only', () => {
 test('all-segment analysis refuses mixed synthetic and real traffic ship decisions', () => {
   const root = tempRoot();
   try {
-    run(root, ['init', '--json']);
+    run(root, ['init', '--framework', 'nextjs-app-router', '--json']);
     run(root, ['experiment', 'create', 'my-test', '--template', 'conversion-test', '--json']);
     run(root, ['connector', 'add', 'local', '--events-file', 'tmp/events.jsonl', '--json']);
     mkdirSync(path.join(root, 'tmp'), { recursive: true });
@@ -150,7 +277,7 @@ test('all-segment analysis refuses mixed synthetic and real traffic ship decisio
 test('analysis uses configured sample size before recommending ship', () => {
   const root = tempRoot();
   try {
-    run(root, ['init', '--json']);
+    run(root, ['init', '--framework', 'nextjs-app-router', '--json']);
     const spec = {
       id: 'sample-size-test',
       name: 'Sample size test',
@@ -250,9 +377,21 @@ test('instrumentation plan uses custom events and root Next.js layout', () => {
     mkdirSync(path.join(root, 'app', 'utils'), { recursive: true });
     mkdirSync(path.join(root, 'hooks'), { recursive: true });
 
-    run(root, ['init', '--json']);
+    run(root, ['init', '--framework', 'nextjs-app-router', '--json']);
     assert.equal(existsSync(path.join(root, '.agents', 'skills', 'growth', 'references', 'nextjs-app-router.md')), true);
     assert.equal(existsSync(path.join(root, '.agents', 'skills', 'growth', 'references', 'spa-navigation.md')), true);
+    const skillReference = readFileSync(
+      path.join(root, '.agents', 'skills', 'growth', 'references', 'nextjs-app-router.md'),
+      'utf8',
+    );
+    const pullWorkflow = readFileSync(
+      path.join(root, '.agents', 'skills', 'growth', 'workflows', 'pull-and-analyze.md'),
+      'utf8',
+    );
+    assert.equal(skillReference.includes('PostHog-style'), false);
+    assert.equal(skillReference.includes('connector_event_shapes'), true);
+    assert.equal(pullWorkflow.includes('connector auth check posthog'), false);
+    assert.equal(pullWorkflow.includes('Follow the returned `_next.command`'), true);
     const spec = {
       id: 'placeholder',
       name: 'Onboarding workspace test',
@@ -335,6 +474,10 @@ test('instrumentation plan uses custom events and root Next.js layout', () => {
       'earliest_app_entrypoint_before_auth_redirects_or_client_navigation',
     );
     assert.equal(
+      plan.data.known_pitfalls.some((pitfall) => pitfall.id === 'synthetic-context-persistence'),
+      true,
+    );
+    assert.equal(
       plan.data.required_contract.agent_traffic.synthetic_context.event_properties.some(
         (property) => property.query_param === 'variant' && property.property === 'variant_id',
       ),
@@ -383,7 +526,8 @@ test('instrumentation plan uses custom events and root Next.js layout', () => {
 test('instrumentation plan flags anonymous assignment on authenticated targeting', () => {
   const root = tempRoot();
   try {
-    run(root, ['init', '--json']);
+    run(root, ['init', '--framework', 'react-vite', '--json']);
+    run(root, ['project', 'auth-context', 'add', 'authenticated-user', '--requires-session', '--json']);
     const spec = {
       id: 'auth-assignment',
       name: 'Authenticated assignment test',
@@ -529,10 +673,11 @@ test('preflight prepare balances synthetic variant packets by default', () => {
   }
 });
 
-test('preflight plan prefers discoverable PostHog before local JSONL', () => {
+test('preflight plan does not infer PostHog from source text without connector state', () => {
   const root = tempRoot();
   try {
     run(root, ['init', '--json']);
+    run(root, ['project', 'auth-context', 'add', 'authenticated-user', '--requires-session', '--json']);
     writeFileSync(path.join(root, 'package.json'), JSON.stringify({ dependencies: { 'posthog-js': '^1.0.0' } }));
     const spec = genericSpec({
       id: 'onboarding-plan',
@@ -545,10 +690,12 @@ test('preflight plan prefers discoverable PostHog before local JSONL', () => {
     run(root, ['experiment', 'create', 'onboarding-plan', '--from-file', specFile, '--json']);
 
     const plan = run(root, ['preflight', 'plan', 'onboarding-plan', '--json']);
-    assert.equal(plan.data.plan.evidence.preferred_evidence, 'posthog');
+    assert.equal(plan.data.plan.evidence.preferred_evidence, 'unconfigured');
+    assert.equal(plan.data.plan.evidence.why.includes('will not infer a provider'), true);
     assert.equal(plan.data.plan.evidence.readiness_ceiling, 'blocked');
     assert.equal(plan.data.plan.next_command, 'growth connector import stripe-projects --json');
     assert.equal(plan.data.plan.target_route, '/onboarding');
+    assert.equal(plan.data.plan.target_route_source.kind, 'experiment_targeting');
     assert.equal(plan.data.plan.packet_app_url, 'http://localhost:3000/onboarding');
     assert.equal(plan.data.plan.browser_context.requires_authenticated_session, true);
     assert.equal(
@@ -556,6 +703,31 @@ test('preflight plan prefers discoverable PostHog before local JSONL', () => {
       true,
     );
     assert.equal(plan.warnings.some((warning) => warning.code === 'AUTHENTICATED_BROWSER_CONTEXT'), true);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('preflight plan ignores host-only targeting domains when choosing route', () => {
+  const root = tempRoot();
+  try {
+    run(root, ['init', '--json']);
+    run(root, ['project', 'route', 'add', 'onboarding', '--path', '/onboarding', '--json']);
+    const spec = genericSpec({
+      id: 'host-only-targeting',
+      event: 'activation_completed',
+      denominatorEvent: 'experiment_viewed',
+    });
+    spec.targeting = { domains: ['localhost:3000'] };
+    const specFile = path.join(root, 'spec.json');
+    writeFileSync(specFile, JSON.stringify(spec));
+    run(root, ['experiment', 'create', 'host-only-targeting', '--from-file', specFile, '--json']);
+
+    const plan = run(root, ['preflight', 'plan', 'host-only-targeting', '--json']);
+    assert.equal(plan.data.plan.target_route, '/onboarding');
+    assert.equal(plan.data.plan.target_route_source.kind, 'project_profile');
+    assert.equal(plan.data.plan.target_route_source.route_id, 'onboarding');
+    assert.equal(plan.data.plan.packet_app_url, 'http://localhost:3000/onboarding');
   } finally {
     cleanup(root);
   }
@@ -596,6 +768,53 @@ test('preflight plan uses provider-backed connector when PostHog is ready', () =
     assert.equal(preflight.data.status, 'prepared');
     assert.equal(preflight.data.preflight_plan.evidence.preferred_evidence, 'posthog');
     assert.match(preflight._next.command, /growth preflight complete /);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('preflight plan treats Statsig as a provider-backed connector adapter', () => {
+  const root = tempRoot();
+  try {
+    run(root, ['init', '--json']);
+    const spec = genericSpec({
+      id: 'statsig-provider-plan',
+      event: 'activation_completed',
+      denominatorEvent: 'experiment_viewed',
+    });
+    spec.targeting = { domains: ['/onboarding'] };
+    const specFile = path.join(root, 'spec.json');
+    writeFileSync(specFile, JSON.stringify(spec));
+    run(root, ['experiment', 'create', 'statsig-provider-plan', '--from-file', specFile, '--json']);
+    writeFileSync(path.join(root, '.env'), ['STATSIG_SERVER_SECRET=secret-test', ''].join('\n'));
+
+    const added = run(root, ['connector', 'add', 'statsig', '--json']);
+    assert.equal(added.data.connector.source, 'statsig');
+    assert.equal(added.data.connector.kind, 'statsig');
+    assert.equal(added.data.connector.statsig.server_key_env, 'STATSIG_SERVER_SECRET');
+    assert.deepEqual(added.data.connector.statsig.project_id, 'STATSIG_PROJECT_ID');
+
+    const auth = run(root, ['connector', 'auth', 'check', 'statsig', '--json']);
+    assert.equal(auth.data.capabilities.telemetry_write.ready, true);
+    assert.equal(auth.data.capabilities.provider_pull.ready, false);
+    assert.deepEqual(auth.data.capabilities.provider_pull.missing, ['console_api_key', 'project_id']);
+
+    const setup = run(root, ['connector', 'auth', 'setup', 'statsig', '--json']);
+    assert.equal(setup.data.ready, false);
+    assert.equal(setup.data.safe_commands.includes('growth env set --key STATSIG_CONSOLE_API_KEY --stdin'), true);
+    assert.equal(setup.data.safe_commands.includes('growth env set --key STATSIG_PROJECT_ID --stdin'), true);
+
+    const plan = run(root, ['preflight', 'plan', 'statsig-provider-plan', '--json']);
+    assert.equal(plan.data.plan.evidence.preferred_evidence, 'statsig');
+    assert.equal(plan.data.plan.evidence.readiness_ceiling, 'blocked');
+    assert.equal(plan.data.plan.next_command, 'growth connector auth setup statsig --json');
+    assert.equal(plan.data.plan.evidence.available_sources[0].evidence_source, 'statsig');
+    assert.equal(plan.data.plan.evidence.available_sources[0].provider_backed, true);
+    assert.equal(plan.data.plan.evidence.available_sources[0].telemetry_write_ready, true);
+    assert.equal(plan.data.plan.evidence.available_sources[0].provider_pull_ready, false);
+    assert.equal(plan.data.plan.evidence.blocked_sources[0].capability, 'provider_pull');
+    assert.equal(plan.data.plan.evidence.blocked_sources[0].manual_input_required, true);
+    assert.equal(plan.data.plan.evidence.blocked_sources[0].reason.includes('Statsig'), true);
   } finally {
     cleanup(root);
   }
@@ -654,6 +873,37 @@ test('variant implementation metadata is command-managed and appears in prefligh
     assert.equal(new URL(treatmentUrl).origin, 'https://treatment.aptny.localhost');
     assert.equal(new URL(treatmentUrl).searchParams.get('variant'), 'treatment');
     assert.equal(preflight.warnings.some((warning) => warning.code === 'VARIANT_IMPLEMENTATION_URLS'), true);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('experiment update accepts a JSON file source', () => {
+  const root = tempRoot();
+  try {
+    run(root, ['init', '--json']);
+    const spec = genericSpec({
+      id: 'file-update',
+      event: 'activation_completed',
+      denominatorEvent: 'experiment_viewed',
+    });
+    const specFile = path.join(root, 'spec.json');
+    writeFileSync(specFile, JSON.stringify(spec));
+    run(root, ['experiment', 'create', 'file-update', '--from-file', specFile, '--json']);
+
+    const nextSpec = {
+      ...spec,
+      id: 'ignored-id',
+      name: 'Updated from file',
+      notes: 'Updated without shelling inline JSON through process args.',
+    };
+    const updateFile = path.join(root, 'update.json');
+    writeFileSync(updateFile, JSON.stringify(nextSpec));
+    const updated = run(root, ['experiment', 'update', 'file-update', '--from-file', updateFile, '--json']);
+
+    assert.equal(updated.data.experiment.id, 'file-update');
+    assert.equal(updated.data.experiment.name, 'Updated from file');
+    assert.equal(updated.next_steps.includes('growth validate --json'), true);
   } finally {
     cleanup(root);
   }
@@ -746,10 +996,12 @@ test('instrumentation verify distinguishes static readiness from emitted evidenc
   }
 });
 
-test('preflight prepare uses scenario route and keeps provider evidence as the next step', () => {
+test('preflight prepare uses project profile route and keeps provider evidence as the next step', () => {
   const root = tempRoot();
   try {
     run(root, ['init', '--json']);
+    run(root, ['project', 'route', 'add', 'onboarding', '--path', '/onboarding', '--json']);
+    run(root, ['project', 'auth-context', 'add', 'authenticated-user', '--requires-session', '--json']);
     const spec = genericSpec({
       id: 'scenario-route',
       event: 'activation_completed',
@@ -781,6 +1033,8 @@ test('preflight prepare uses scenario route and keeps provider evidence as the n
 
     const plan = run(root, ['preflight', 'plan', 'scenario-route', '--json']);
     assert.equal(plan.data.plan.target_route, '/onboarding');
+    assert.equal(plan.data.plan.target_route_source.kind, 'project_profile');
+    assert.equal(plan.data.plan.target_route_source.route_id, 'onboarding');
     assert.equal(plan.data.plan.packet_app_url, 'http://localhost:3000/onboarding');
     assert.equal(plan.data.plan.browser_context.requires_authenticated_session, true);
 
@@ -816,6 +1070,39 @@ test('preflight prepare uses scenario route and keeps provider evidence as the n
 
     const completed = run(root, ['preflight', 'complete', preflight.data.run.id, '--json']);
     assert.equal(completed._next.command, `growth preflight pull ${preflight.data.run.id} --source posthog --json`);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('preflight plan does not infer target route from scenario prose', () => {
+  const root = tempRoot();
+  try {
+    run(root, ['init', '--json']);
+    const spec = genericSpec({
+      id: 'no-scenario-route-heuristic',
+      event: 'activation_completed',
+      denominatorEvent: 'experiment_viewed',
+      preflight: {
+        scenarios: [
+          {
+            id: 'onboarding_path',
+            goal: 'Start from /onboarding and complete the activation path.',
+            expected_events: ['experiment_viewed', 'activation_completed'],
+          },
+        ],
+      },
+    });
+    spec.targeting = { domains: ['app'] };
+    const specFile = path.join(root, 'spec.json');
+    writeFileSync(specFile, JSON.stringify(spec));
+    run(root, ['experiment', 'create', 'no-scenario-route-heuristic', '--from-file', specFile, '--json']);
+
+    const plan = run(root, ['preflight', 'plan', 'no-scenario-route-heuristic', '--json']);
+    assert.equal(plan.data.plan.target_route, '/');
+    assert.equal(plan.data.plan.target_route_source.kind, 'default_root');
+    assert.equal(plan.warnings.some((warning) => warning.code === 'TARGET_ROUTE_DEFAULT_ROOT'), true);
+    assert.equal(plan.next_steps.some((step) => step.includes('growth project route add')), true);
   } finally {
     cleanup(root);
   }
@@ -904,7 +1191,7 @@ test('react-vite preflight URLs use framework default and persist explicit app u
       path.join(root, 'package.json'),
       JSON.stringify({ dependencies: { react: '^19.0.0', vite: '^8.0.0' } }) + '\n',
     );
-    run(root, ['init', '--json']);
+    run(root, ['init', '--framework', 'react-vite', '--json']);
     run(root, ['experiment', 'create', 'my-test', '--template', 'conversion-test', '--json']);
 
     const detected = run(root, ['preflight', 'prepare', 'my-test', '--agents', '1', '--json']);
@@ -984,6 +1271,7 @@ test('preflight complete-local finishes prepared run from synthetic JSONL events
   try {
     run(root, ['init', '--json']);
     run(root, ['experiment', 'create', 'onboarding-flow', '--template', 'onboarding-activation', '--json']);
+    run(root, ['connector', 'add', 'local', '--events-file', 'tmp/preflight-events.jsonl', '--json']);
     const preflight = run(root, ['preflight', 'prepare', 'onboarding-flow', '--agents', '2', '--json']);
     assert.match(preflight._next.command, /growth preflight complete-local/);
     mkdirSync(path.join(root, 'tmp'), { recursive: true });
@@ -1269,6 +1557,7 @@ test('preflight command is primary and returns structured audit and continuation
     const created = run(root, ['experiment', 'create', 'onboarding-flow', '--template', 'onboarding-activation', '--json']);
     assert.equal(created._next.command, 'growth instrumentation plan onboarding-flow --json');
     assert.ok(created.data.experiment.instrumentation.events.some((event) => event.event === 'activation_completed'));
+    run(root, ['connector', 'add', 'local', '--events-file', 'tmp/events.jsonl', '--json']);
 
     const preflight = run(root, ['preflight', 'prepare', 'onboarding-flow', '--agents', '2', '--json']);
     assert.match(preflight.data.run.id, /^preflight_/);
@@ -1426,7 +1715,7 @@ test('preflight audit attributes missing preflight events to coverage after loca
   }
 });
 
-test('doctor warns when SPA navigation can drop synthetic query params', () => {
+test('doctor does not scan source text for SPA navigation heuristics', () => {
   const root = tempRoot();
   try {
     mkdirSync(path.join(root, 'src'), { recursive: true });
@@ -1441,7 +1730,7 @@ test('doctor warns when SPA navigation can drop synthetic query params', () => {
     run(root, ['init', '--json']);
     const doctor = run(root, ['doctor', '--json']);
     const check = doctor.data.checks.find((item) => item.name === 'spa_agent_context');
-    assert.equal(check.status, 'warn');
+    assert.equal(check, undefined);
   } finally {
     cleanup(root);
   }

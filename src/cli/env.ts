@@ -5,7 +5,7 @@ import { wrap, type RunCtx } from '../lib/runner.js';
 import { requireInitialized } from '../lib/gating.js';
 import { GrowthError } from '../lib/envelope.js';
 import { readEnvValue } from '../lib/env-files.js';
-import { POSTHOG_DEFAULT_API_KEY_ENV, POSTHOG_DEFAULT_HOST_ENV } from '../lib/connector-catalog.js';
+import { POSTHOG_DEFAULT_API_KEY_ENV, POSTHOG_DEFAULT_HOST_ENV } from '../connectors/posthog/config.js';
 
 export function registerEnv(program: Command, ctx: RunCtx): void {
   const env = program.command('env').description('Check and update environment keys without printing secrets.');

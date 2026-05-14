@@ -1,4 +1,4 @@
-import type { ExperimentEvent } from '../domain/types.js';
+import type { ExperimentEvent } from '../experiment/types.js';
 
 export interface PacketScenario {
   id: string;
@@ -54,4 +54,3 @@ export interface AuditPreflightOptions {
   dryRun?: boolean;
   providerBacked?: boolean;
 }
-

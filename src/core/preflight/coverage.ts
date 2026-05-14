@@ -1,4 +1,4 @@
-import type { Experiment } from '../domain/types.js';
+import type { Experiment } from '../experiment/types.js';
 import type { PacketScenario } from './types.js';
 
 export interface PreflightCoverage {

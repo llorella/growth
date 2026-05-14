@@ -4,7 +4,7 @@ import {
   preflightCoverage,
   requiredPreflightEvents,
   scenarioExpectedEvents,
-} from '../dist/preflight/coverage.js';
+} from '../dist/core/preflight/coverage.js';
 
 test('required preflight coverage includes metric and instrumentation events', () => {
   const exp = coverageExperiment();

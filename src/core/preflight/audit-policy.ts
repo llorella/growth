@@ -1,10 +1,10 @@
-import type { Experiment, ExperimentEvent, GrowthRun } from '../domain/types.js';
+import type { Experiment, ExperimentEvent, GrowthRun } from '../experiment/types.js';
 import {
   eventTimestampEvidence,
   isUntrustworthyTimestamp,
   type EventWindowRejection,
-} from '../domain/event-window.js';
-import { hasSyntheticTrafficLabels } from '../domain/synthetic-traffic.js';
+} from '../evidence/event-window.js';
+import { hasSyntheticTrafficLabels } from '../evidence/synthetic-traffic.js';
 import { requiredPreflightEvents } from './coverage.js';
 import type { AuditRecommendation, PreflightAudit, PreflightReportSummary } from './types.js';
 

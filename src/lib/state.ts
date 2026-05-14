@@ -4,6 +4,7 @@
  *   .growth/state.local.json  - gitignored; machine-local cursors and prefs
  */
 import { promises as fs } from 'node:fs';
+import type { ProjectProfile } from './project-profile.js';
 import { paths, type Paths } from './paths.js';
 
 export interface SharedState {
@@ -11,6 +12,7 @@ export interface SharedState {
   project: {
     name: string;
     framework: string;
+    profile?: ProjectProfile;
     initialized_at: string;
   };
   connectors: Record<
@@ -97,6 +99,16 @@ export function newSharedState(projectName: string, framework: string): SharedSt
     project: {
       name: projectName,
       framework,
+      profile: {
+        schema_version: 1,
+        framework: {
+          id: framework,
+          source: 'init',
+        },
+        app_urls: {},
+        routes: [],
+        auth_contexts: [],
+      },
       initialized_at: initializedAt,
     },
     connectors: {},

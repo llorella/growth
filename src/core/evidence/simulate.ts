@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto';
-import { assignVariant } from './assignment.js';
+import { assignVariant } from '../experiment/assignment.js';
 import {
   syntheticSimulationRunId,
   syntheticTrafficPayload,
 } from './synthetic-traffic.js';
-import type { Store } from '../lib/store.js';
-import type { Assignment, Experiment, ExperimentEvent } from './types.js';
+import type { Store } from '../../lib/store.js';
+import type { Assignment, Experiment, ExperimentEvent } from '../experiment/types.js';
 
 export interface SimulateOptions {
   days: number;

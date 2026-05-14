@@ -1,11 +1,11 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { paths } from '../lib/paths.js';
-import { GrowthError } from '../lib/envelope.js';
-import { defaultLocalConnector, mapEvent } from '../lib/connectors.js';
-import { syntheticTrafficConnectorPayloadPaths } from '../lib/connector-catalog.js';
-import type { Experiment, ExperimentEvent, GrowthRun } from '../domain/types.js';
-import { syntheticAgentRunId } from '../domain/synthetic-traffic.js';
+import { localAdapter } from '../../connectors/local/adapter.js';
+import { paths } from '../../lib/paths.js';
+import { GrowthError } from '../../lib/envelope.js';
+import { syntheticTrafficConnectorPayloadPaths } from '../../lib/connector-catalog.js';
+import type { Experiment, ExperimentEvent, GrowthRun } from '../experiment/types.js';
+import { syntheticAgentRunId } from '../evidence/synthetic-traffic.js';
 import { preflightCoverage, requiredPreflightEvents, uniqueEvents } from './coverage.js';
 import type { PreflightReportSummary } from './types.js';
 
@@ -51,7 +51,10 @@ export function synthesizeReportsFromEvents(run: GrowthRun, exp: Experiment, eve
 export async function readLocalEventsAsExperimentEvents(root: string, eventsFile: string, exp: Experiment): Promise<ExperimentEvent[]> {
   const resolved = path.resolve(root, eventsFile);
   const raw = await fs.readFile(resolved, 'utf8');
-  const connector = defaultLocalConnector(path.relative(root, resolved));
+  const connector = localAdapter.defaultConfig({
+    source: 'local',
+    eventsFile: path.relative(root, resolved),
+  });
   for (const event of requiredPreflightEvents(exp)) {
     connector.mappings[event] = connector.mappings[event] ?? {
       framework_event: event,
@@ -67,7 +70,7 @@ export async function readLocalEventsAsExperimentEvents(root: string, eventsFile
     } catch {
       continue;
     }
-    const mapped = mapEvent(connector, parsed);
+    const mapped = localAdapter.mapEvent(connector, parsed);
     if (mapped.event) events.push(mapped.event);
   }
   return events;

@@ -10,7 +10,7 @@ import {
   syntheticAgentRunId,
   syntheticSimulationRunId,
   syntheticTrafficPayload,
-} from '../dist/domain/synthetic-traffic.js';
+} from '../dist/core/evidence/synthetic-traffic.js';
 
 test('synthetic traffic URL carries stable preflight identity params', () => {
   const url = new URL(

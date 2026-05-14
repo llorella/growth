@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import {
   buildPreflightAudit,
   PREFLIGHT_AUDIT_CHECKS,
-} from '../dist/preflight/audit-policy.js';
-import { syntheticTrafficPayload } from '../dist/domain/synthetic-traffic.js';
+} from '../dist/core/preflight/audit-policy.js';
+import { syntheticTrafficPayload } from '../dist/core/evidence/synthetic-traffic.js';
 
 test('preflight audit policy passes provider-backed complete evidence', () => {
   const audit = buildPreflightAudit({

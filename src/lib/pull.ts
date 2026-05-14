@@ -9,26 +9,17 @@
  */
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { assertConnectorCoverage } from '../connectors/coverage.js';
+import { connectorAdapterFor, supportedConnectorAdapterKinds } from '../connectors/registry.js';
 import { paths } from './paths.js';
 import { Store } from './store.js';
 import { GrowthError } from './envelope.js';
 import {
   getConnector,
   listConnectors,
-  assertCoverage,
-  mapEvent,
-  readPath,
   type ConnectorConfig,
 } from './connectors.js';
-import {
-  POSTHOG_DEFAULT_API_KEY_ENV,
-  POSTHOG_DEFAULT_HOST,
-  connectorApiKeyEnv,
-} from './connector-catalog.js';
-import { postHogProjectIdReference, readPostHogProviderProjectId } from './posthog-capabilities.js';
-import { readEnvValue } from './env-files.js';
-import type { Assignment, ExperimentEvent } from '../domain/types.js';
-import { containsTimestamp } from '../domain/event-window.js';
+import type { Assignment, ExperimentEvent } from '../core/experiment/types.js';
 
 export interface PullCursors {
   [source: string]: {
@@ -96,6 +87,16 @@ export async function pull(root: string, opts: PullOptions): Promise<PullResult>
       `No connector at .growth/connectors/${opts.source}.json.`,
     );
   }
+  const adapter = connectorAdapterFor(connector);
+  if (!adapter) {
+    throw new GrowthError(
+      'unsupported_connector_kind',
+      `Pull for kind "${connector.kind}" is not implemented for this connector.`,
+      {
+        supported: supportedConnectorAdapterKinds(),
+      },
+    );
+  }
 
   // Coverage check across all active experiments before fetching anything -
   // catches missing field mappings before they become silent drops.
@@ -107,7 +108,7 @@ export async function pull(root: string, opts: PullOptions): Promise<PullResult>
   if (!experiment) {
     throw new GrowthError('not_found', `Experiment "${opts.experimentId}" not found.`);
   }
-  assertCoverage([experiment], allConnectors);
+  assertConnectorCoverage([experiment], allConnectors);
 
   const cursors = await readCursors(root);
   const before = opts.before ?? new Date().toISOString();
@@ -133,7 +134,7 @@ export async function pull(root: string, opts: PullOptions): Promise<PullResult>
     );
   }
 
-  const raw = await fetchRawEvents(root, connector, after, before, opts.limit ?? 1000);
+  const raw = await fetchRawEvents(root, connector, adapter, after, before, opts.limit ?? 1000);
 
   // Pre-load assignments per experiment so we can lazily extend without re-reading.
   const ingestedIds = await store.readIngestedIdempotencyKeys();
@@ -160,7 +161,7 @@ export async function pull(root: string, opts: PullOptions): Promise<PullResult>
   let deduped = 0;
 
   for (const r of raw) {
-    const result = mapEvent(connector, r);
+    const result = adapter.mapEvent(connector, r);
     if (result.drop_reason) {
       note(result.drop_reason);
       continue;
@@ -203,8 +204,8 @@ export async function pull(root: string, opts: PullOptions): Promise<PullResult>
   cursors[opts.source] = {
     ...(cursors[opts.source] ?? {}),
     [opts.experimentId]: {
-    last_pulled_at: new Date().toISOString(),
-    highwater_timestamp: newHighwater,
+      last_pulled_at: new Date().toISOString(),
+      highwater_timestamp: newHighwater,
     },
   };
   await writeCursors(root, cursors);
@@ -228,73 +229,12 @@ export async function pull(root: string, opts: PullOptions): Promise<PullResult>
 async function fetchRawEvents(
   root: string,
   connector: ConnectorConfig,
+  adapter: NonNullable<ReturnType<typeof connectorAdapterFor>>,
   after: string,
   before: string,
   limit: number,
 ): Promise<unknown[]> {
-  if (connector.kind === 'posthog') {
-    return fetchPostHog(root, connector, after, before, limit);
-  }
-  if (connector.kind === 'native-app' && connector.local) {
-    return fetchLocalJsonl(root, connector, after, before, limit);
-  }
-  throw new GrowthError(
-    'unsupported_connector_kind',
-    `Pull for kind "${connector.kind}" is not implemented for this connector.`,
-    {
-      supported: ['posthog', 'native-app with local.events_file'],
-    },
-  );
-}
-
-async function fetchLocalJsonl(
-  root: string,
-  connector: ConnectorConfig,
-  after: string,
-  before: string,
-  limit: number,
-): Promise<unknown[]> {
-  const configuredFile = connector.local?.events_file;
-  if (!configuredFile) {
-    throw new GrowthError(
-      'connector_misconfigured',
-      'native-app local pull requires local.events_file in the connector config.',
-    );
-  }
-  const file = path.isAbsolute(configuredFile) ? configuredFile : path.join(root, configuredFile);
-  let raw: string;
-  try {
-    raw = await fs.readFile(file, 'utf8');
-  } catch {
-    throw new GrowthError(
-      'local_events_file_not_found',
-      `Local events file not found: ${path.relative(root, file)}`,
-      { file: path.relative(root, file) },
-    );
-  }
-
-  const window = { after, before };
-  const out: unknown[] = [];
-  for (const line of raw.split('\n')) {
-    if (!line.trim()) continue;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    const timestamp = connector.timestamp_path
-      ? readPath(parsed, connector.timestamp_path)
-      : readPath(parsed, 'timestamp');
-    const timestampCheck = containsTimestamp(
-      window,
-      typeof timestamp === 'string' ? timestamp : undefined,
-    );
-    if (!timestampCheck.inside) continue;
-    out.push(parsed);
-    if (out.length >= limit) break;
-  }
-  return out;
+  return adapter.pullEvents(root, connector, { after, before }, limit);
 }
 
 async function writePullRecord(
@@ -409,61 +349,4 @@ function windowsOverlap(
 
 function timestampId(): string {
   return new Date().toISOString().replace(/[-:.]/g, '');
-}
-
-async function fetchPostHog(
-  root: string,
-  connector: ConnectorConfig,
-  after: string,
-  before: string,
-  limit: number,
-): Promise<unknown[]> {
-  if (!connector.posthog) {
-    throw new GrowthError(
-      'connector_misconfigured',
-      'posthog connector is missing the `posthog` config block (host, project_id, api_key_env).',
-    );
-  }
-  const apiKeyEnv = connectorApiKeyEnv(connector) ?? POSTHOG_DEFAULT_API_KEY_ENV;
-  const apiKey = await readEnvValue(root, apiKeyEnv);
-  if (!apiKey) {
-    throw new GrowthError(
-      'missing_api_key',
-      `Set ${apiKeyEnv} to the PostHog API key configured for this app.`,
-    );
-  }
-  const host = connector.posthog.host ?? POSTHOG_DEFAULT_HOST;
-  const configuredProjectId = postHogProjectIdReference(connector);
-  const projectId = await readPostHogProviderProjectId(root, connector);
-  if (!projectId) {
-    throw new GrowthError(
-      'missing_project_id',
-      `PostHog provider pulls require a project id. App telemetry can be configured with the analytics API key and host, but provider-backed preflight needs ${configuredProjectId} to read events back from PostHog.`,
-    );
-  }
-
-  const eventNames = Object.keys(connector.mappings);
-  const results: unknown[] = [];
-  for (const eventName of eventNames) {
-    const params = new URLSearchParams({ event: eventName, limit: String(limit) });
-    params.set('after', after);
-    params.set('before', before);
-
-    let url: string | null = `${host}/api/projects/${projectId}/events/?${params.toString()}`;
-    while (url) {
-      const res = await fetch(url, { headers: { Authorization: `Bearer ${apiKey}` } });
-      if (!res.ok) {
-        const text = await res.text();
-        throw new GrowthError(
-          'posthog_api_error',
-          `PostHog API error ${res.status}`,
-          { status: res.status, body: text.slice(0, 500) },
-        );
-      }
-      const body = (await res.json()) as { results: unknown[]; next: string | null };
-      results.push(...body.results);
-      url = body.next && results.length < limit * eventNames.length ? body.next : null;
-    }
-  }
-  return results;
 }

@@ -1,18 +1,49 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
-export type FrameworkId =
-  | 'nextjs-app-router'
-  | 'nextjs-pages-router'
-  | 'react-vite'
-  | 'remix'
-  | 'astro'
-  | 'sveltekit'
-  | 'rails'
-  | 'django'
-  | 'flask-fastapi'
-  | 'generic-node'
-  | 'unknown';
+export const FRAMEWORK_IDS = [
+  'nextjs-app-router',
+  'nextjs-pages-router',
+  'react-vite',
+  'remix',
+  'astro',
+  'sveltekit',
+  'rails',
+  'django',
+  'flask-fastapi',
+  'generic-node',
+  'unknown',
+] as const;
+
+export type FrameworkId = (typeof FRAMEWORK_IDS)[number];
+
+const FRAMEWORK_ALIASES: Record<string, FrameworkId> = {
+  next: 'nextjs-app-router',
+  nextjs: 'nextjs-app-router',
+  'nextjs-app': 'nextjs-app-router',
+  'next-app': 'nextjs-app-router',
+  'nextjs-pages': 'nextjs-pages-router',
+  'next-pages': 'nextjs-pages-router',
+  vite: 'react-vite',
+  'vite-react': 'react-vite',
+  flask: 'flask-fastapi',
+  fastapi: 'flask-fastapi',
+};
+
+export function isFrameworkId(value: unknown): value is FrameworkId {
+  return typeof value === 'string' && FRAMEWORK_IDS.includes(value as FrameworkId);
+}
+
+export function normalizeFrameworkId(value: string | undefined): FrameworkId | undefined {
+  const key = value?.trim().toLowerCase();
+  if (!key) return undefined;
+  if (isFrameworkId(key)) return key;
+  return FRAMEWORK_ALIASES[key];
+}
+
+export function supportedFrameworkIds(): FrameworkId[] {
+  return [...FRAMEWORK_IDS];
+}
 
 async function exists(file: string): Promise<boolean> {
   try {
@@ -21,41 +52,6 @@ async function exists(file: string): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-async function readJson(file: string): Promise<Record<string, unknown> | null> {
-  try {
-    return JSON.parse(await fs.readFile(file, 'utf8')) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
-export async function detectFramework(root: string): Promise<FrameworkId> {
-  const pkg = await readJson(path.join(root, 'package.json'));
-  const deps = {
-    ...((pkg?.dependencies as Record<string, unknown> | undefined) ?? {}),
-    ...((pkg?.devDependencies as Record<string, unknown> | undefined) ?? {}),
-  };
-
-  if (deps.next || (await exists(path.join(root, 'next.config.js'))) || (await exists(path.join(root, 'next.config.ts')))) {
-    if (await exists(path.join(root, 'src', 'app'))) return 'nextjs-app-router';
-    if (await exists(path.join(root, 'app'))) return 'nextjs-app-router';
-    if (await exists(path.join(root, 'src', 'pages'))) return 'nextjs-pages-router';
-    if (await exists(path.join(root, 'pages'))) return 'nextjs-pages-router';
-    return 'nextjs-app-router';
-  }
-  if (deps.vite && deps.react) return 'react-vite';
-  if (deps['@remix-run/react']) return 'remix';
-  if (deps.astro) return 'astro';
-  if (deps['@sveltejs/kit']) return 'sveltekit';
-  if (await exists(path.join(root, 'config', 'application.rb'))) return 'rails';
-  if (await exists(path.join(root, 'manage.py'))) return 'django';
-  if (await exists(path.join(root, 'pyproject.toml')) || await exists(path.join(root, 'requirements.txt'))) {
-    return 'flask-fastapi';
-  }
-  if (pkg) return 'generic-node';
-  return 'unknown';
 }
 
 export async function suggestedInstrumentationFiles(root: string, framework: FrameworkId): Promise<string[]> {

@@ -1,6 +1,6 @@
 /**
  * Core types for an experiment spec. 1:1 with the JSON Schema in
- * domain/schema.ts - agents read the schema, produce JSON, the framework
+ * core/experiment/schema.ts - agents read the schema, produce JSON, the framework
  * parses into these types. Keep them in sync.
  */
 

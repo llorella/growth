@@ -1,4 +1,4 @@
-import type { ExperimentEvent } from './types.js';
+import type { ExperimentEvent } from '../experiment/types.js';
 
 export interface EventWindow {
   after: string;

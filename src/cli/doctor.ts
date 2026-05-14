@@ -5,10 +5,11 @@ import path from 'node:path';
 import { wrap, type RunCtx } from '../lib/runner.js';
 import { isInitialized } from '../lib/state.js';
 import { Store } from '../lib/store.js';
-import { listConnectors, assertCoverage } from '../lib/connectors.js';
-import { detectFramework, suggestedInstrumentationFiles } from '../lib/framework.js';
+import { assertConnectorCoverage } from '../connectors/coverage.js';
+import { listConnectors } from '../lib/connectors.js';
+import { suggestedInstrumentationFiles, type FrameworkId } from '../lib/framework.js';
+import { readProjectProfile } from '../lib/project-profile.js';
 import { paths } from '../lib/paths.js';
-import { scanSpaAgentContext, type SpaAgentContextScan } from '../lib/code-hints.js';
 
 type CheckStatus = 'pass' | 'warn' | 'fail';
 
@@ -39,11 +40,12 @@ export function registerDoctor(program: Command, ctx: RunCtx): void {
         }
 
         const store = new Store(root);
-        const [experiments, connectors, framework] = await Promise.all([
+        const [experiments, connectors, profile] = await Promise.all([
           store.listExperiments(),
           listConnectors(root),
-          detectFramework(root),
+          readProjectProfile(root),
         ]);
+        const framework = (profile.framework?.id ?? 'unknown') as FrameworkId;
         const focused = experimentId ? experiments.find((exp) => exp.id === experimentId) : undefined;
         if (experimentId) {
           checks.push({
@@ -71,7 +73,7 @@ export function registerDoctor(program: Command, ctx: RunCtx): void {
 
         if (connectors.length && (focused || experiments.length)) {
           try {
-            assertCoverage(focused ? [focused] : experiments, connectors);
+            assertConnectorCoverage(focused ? [focused] : experiments, connectors);
             checks.push({
               name: 'connector_coverage',
               status: 'pass',
@@ -109,9 +111,6 @@ export function registerDoctor(program: Command, ctx: RunCtx): void {
           },
         });
 
-        const spaCheck = await checkSpaAgentContext(await scanSpaAgentContext(root));
-        if (spaCheck) checks.push(spaCheck);
-
         const recentRuns = await listRecentRuns(root);
         checks.push({
           name: 'runs',
@@ -123,25 +122,6 @@ export function registerDoctor(program: Command, ctx: RunCtx): void {
         return doctorResult(checks);
       });
     });
-}
-
-function checkSpaAgentContext(scan: SpaAgentContextScan): DoctorCheck | null {
-  if (!scan.uses_client_navigation) return null;
-  if (scan.persists_agent_context) {
-    return {
-      name: 'spa_agent_context',
-      status: 'pass',
-      message: 'SPA client navigation is present and synthetic agent context appears to be persisted.',
-      details: scan as unknown as Record<string, unknown>,
-    };
-  }
-  return {
-    name: 'spa_agent_context',
-    status: 'warn',
-    message:
-      'SPA client navigation can drop preflight query params. Persist agent_generated, agent_run_id, experiment_id, and variant to sessionStorage before tracking events.',
-    details: scan as unknown as Record<string, unknown>,
-  };
 }
 
 function doctorResult(checks: DoctorCheck[]) {

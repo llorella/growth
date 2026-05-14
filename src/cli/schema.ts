@@ -5,7 +5,7 @@ import {
   eventTaxonomySchema,
   experimentSchema,
   preflightReportSchema,
-} from '../domain/schema.js';
+} from '../core/experiment/schema.js';
 import { GrowthError } from '../lib/envelope.js';
 
 const SCHEMAS: Record<string, unknown> = {

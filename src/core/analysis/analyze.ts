@@ -1,6 +1,6 @@
-import type { AnalysisResult, AnalysisSegment, Experiment } from './types.js';
+import type { AnalysisResult, AnalysisSegment, Experiment } from '../experiment/types.js';
 import { buildAnalysis } from './analysis-policy.js';
-import type { Store } from '../lib/store.js';
+import type { Store } from '../../lib/store.js';
 
 export async function analyzeExperiment(
   store: Store,

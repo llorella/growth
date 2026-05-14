@@ -8,9 +8,9 @@ import type {
   Recommendation,
   AnalysisSegment,
   Assignment,
-} from './types.js';
-import { continuousSignificance, proportionSignificance } from './stats.js';
-import { isRealUserEvent, isSyntheticEvent } from './synthetic-traffic.js';
+} from '../experiment/types.js';
+import { continuousSignificance, proportionSignificance } from '../experiment/stats.js';
+import { isRealUserEvent, isSyntheticEvent } from '../evidence/synthetic-traffic.js';
 
 type RawValuesByVariant = Record<string, number[]>;
 

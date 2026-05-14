@@ -1,4 +1,4 @@
-import type { Experiment } from '../domain/types.js';
+import type { Experiment } from '../core/experiment/types.js';
 
 export const BUILT_IN_TEMPLATES: Record<string, Partial<Experiment>> = {
   'conversion-test': {
