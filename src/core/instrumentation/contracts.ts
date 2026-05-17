@@ -301,7 +301,7 @@ export function knownPitfalls(exp: Experiment, connector?: ConnectorConfig, proj
       applies_to: 'synthetic-browser-preflight',
       message:
         'PostHog\'s default bot detection silently drops events from HeadlessChrome and other automated user agents. Synthetic preflight traffic will emit zero events unless the filter is disabled in dev.',
-      fix: 'Set `opt_out_useragent_filter: true` in your PostHog client init options for development/test environments.',
+      fix: 'Set `opt_out_useragent_filter: true` in your PostHog client init options for development/test environments, or launch the browser with a real user agent: `agent-browser --user-agent "Mozilla/5.0 ..." open <url>`.',
     });
   }
   const authenticatedEvidence = authenticatedTargetingEvidence(projectProfile);

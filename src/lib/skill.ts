@@ -8,6 +8,7 @@ description: Use the growth CLI to design, instrument, verify, and run growth ex
 allowed-tools:
   - Bash(growth *)
   - Bash(node dist/index.js *)
+  - Bash(agent-browser *)
   - Read(.growth/experiments/*)
   - Read(.growth/connectors/*)
   - Read(.growth/event-taxonomy.json)
@@ -121,7 +122,7 @@ const WORKFLOWS: Record<string, string> = {
 2. Follow the returned \`_next.command\`.
 3. If \`browser_context.requires_authenticated_session=true\`, use an authenticated browser session for packet execution and report login/paywall blockers explicitly.
 4. If Growth prepares packets, note \`event_window.after\`; events before that timestamp are intentionally excluded from \`growth preflight pull\`.
-5. Launch each generated packet with the available browser runner.
+5. Launch each generated packet with \`agent-browser\`. Run \`agent-browser open <packet_url>\`, then use \`agent-browser snapshot -i\` and \`agent-browser click/fill/type\` to interact. Take screenshots with \`agent-browser screenshot\` for the report.
 6. Attach reports with \`growth preflight attach-report <run_id> --agent <n> --file <report.json> --json\`.
 7. Complete with \`growth preflight complete <run_id> --json\`.
 8. Pull and audit using the source selected by Growth.
