@@ -38,10 +38,16 @@ export type AuditRecommendation =
   | 'fix_auth_or_environment'
   | 'do_not_launch';
 
+export interface AuditRecommendationDetail {
+  action: AuditRecommendation;
+  summary: string;
+}
+
 export interface PreflightAudit {
   run_id: string;
   experiment_id?: string;
   recommendation: AuditRecommendation;
+  recommendation_detail: AuditRecommendationDetail;
   checks: Array<{ id: string; status: 'pass' | 'warn' | 'fail'; message: string; evidence?: unknown }>;
   reports: PreflightReportSummary[];
   synthetic_only: true;

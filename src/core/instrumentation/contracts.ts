@@ -278,7 +278,7 @@ export function referenceImplementation(framework: string) {
   };
 }
 
-export function knownPitfalls(exp: Experiment, projectProfile?: ProjectProfile): InstrumentationPitfall[] {
+export function knownPitfalls(exp: Experiment, connector?: ConnectorConfig, projectProfile?: ProjectProfile): InstrumentationPitfall[] {
   const pitfalls: InstrumentationPitfall[] = [
     {
       id: 'variant-field-duality',
@@ -295,6 +295,15 @@ export function knownPitfalls(exp: Experiment, projectProfile?: ProjectProfile):
       fix: 'Capture preflight query params once, persist them through the synthetic context contract, and attach the persisted values to every experiment event.',
     },
   ];
+  if (connector?.kind === 'posthog') {
+    pitfalls.push({
+      id: 'posthog-bot-detection',
+      applies_to: 'synthetic-browser-preflight',
+      message:
+        'PostHog\'s default bot detection silently drops events from HeadlessChrome and other automated user agents. Synthetic preflight traffic will emit zero events unless the filter is disabled in dev.',
+      fix: 'Set `opt_out_useragent_filter: true` in your PostHog client init options for development/test environments.',
+    });
+  }
   const authenticatedEvidence = authenticatedTargetingEvidence(projectProfile);
   if (authenticatedEvidence.length) {
     pitfalls.unshift({

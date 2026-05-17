@@ -73,6 +73,17 @@ do not assume a provider envelope or local JSONL shape from this reference.
 Append local JSONL only when the preflight plan or connector config selects it,
 and shape those rows from the selected connector config.
 
+## Authentication for Preflight
+
+When \`browser_context.requires_authenticated_session=true\`, the preflight agent must authenticate before exercising the experiment surface. Common dev-auth patterns:
+
+- **Dev-only auto-signin endpoint**: Many Next.js apps expose a route like \`/api/dev-login?user=test@example.com\` in development that sets a session cookie without interactive auth.
+- **Magic link from stdout**: If the app emails a magic link, the dev server often logs the link to stdout. Capture it from the terminal output and navigate directly.
+- **Test credential seeding**: Check \`prisma/seed.ts\`, \`scripts/seed.*\`, or the README for pre-seeded test users and passwords.
+- **Auth bypass env var**: Some apps skip auth when an env var like \`SKIP_AUTH=true\` or \`NEXT_PUBLIC_MOCK_AUTH=true\` is set in \`.env.local\`.
+
+Report any login, paywall, or onboarding gate that blocks the experiment surface as a blocker in the preflight report.
+
 ## Verification
 
 After implementing, run:

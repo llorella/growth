@@ -23,7 +23,9 @@ import {
   POSTHOG_REQUIRED_SCOPES,
   defaultPostHogConnector,
   defaultPostHogMappings,
+  isPostHogPersonalApiKey,
   postHogApiKeyEnv,
+  postHogPersonalApiKeyEnv,
   postHogRequiredEnv,
 } from './config.js';
 import { providerCapabilityPolicy } from '../auth-policy.js';
@@ -190,8 +192,8 @@ export const postHogAdapter: ConnectorAdapter = {
   providerPullBlockReason(connector: ConnectorConfig, status: ConnectorCapabilityStatus): string {
     const telemetryWrite = status.capabilities.telemetry_write;
     const providerPull = status.capabilities.provider_pull;
-    if (telemetryWrite?.ready && providerPull?.missing.length === 1 && providerPull.missing[0] === 'project_id') {
-      return `${connector.source} app telemetry is configured, but provider-backed preflight needs a PostHog project id to pull synthetic events.`;
+    if (telemetryWrite?.ready && !providerPull?.ready) {
+      return `${connector.source} app telemetry is configured, but provider-backed preflight needs read-side credentials: ${providerPull?.missing.join(', ') ?? 'unknown'}.`;
     }
     return `${connector.source} provider-backed preflight is blocked because required read-side values are missing: ${providerPull?.missing.join(', ') ?? 'unknown'}.`;
   },
@@ -255,8 +257,20 @@ async function postHogAuthSetup(
       manual_input_required: true,
       safe_commands: authStatus.api_key_env ? [`growth env set --key ${authStatus.api_key_env} --stdin`] : [],
       guidance: authStatus.api_key_env
-        ? `Provide the PostHog analytics API key through growth env set for ${authStatus.api_key_env}.`
+        ? `Provide the PostHog project token (starts with phc_) through growth env set for ${authStatus.api_key_env}.`
         : 'Configure posthog.api_key_env on the connector, then rerun auth setup.',
+    });
+  }
+  if (!authStatus.personal_api_key_present) {
+    requirements.push({
+      id: 'posthog-personal-api-key',
+      capability: 'provider_pull',
+      field: 'personal_api_key',
+      env: authStatus.personal_api_key_env,
+      present: false,
+      manual_input_required: true,
+      safe_commands: [`growth env set --key ${authStatus.personal_api_key_env} --stdin`],
+      guidance: `Provide a PostHog personal API key (starts with phx_, from PostHog → Settings → Personal API Keys) through growth env set for ${authStatus.personal_api_key_env}.`,
     });
   }
   if (!authStatus.project_id_present) {
@@ -479,12 +493,18 @@ async function fetchPostHog(
       'posthog connector is missing the `posthog` config block (host, project_id, api_key_env).',
     );
   }
-  const apiKeyEnv = postHogApiKeyEnv(connector) ?? POSTHOG_DEFAULT_API_KEY_ENV;
-  const apiKey = await readEnvValue(root, apiKeyEnv);
-  if (!apiKey) {
+  const personalApiKeyEnv = postHogPersonalApiKeyEnv(connector)!;
+  const personalApiKey = await readEnvValue(root, personalApiKeyEnv);
+  if (!personalApiKey) {
     throw new GrowthError(
-      'missing_api_key',
-      `Set ${apiKeyEnv} to the PostHog API key configured for this app.`,
+      'missing_personal_api_key',
+      `Provider pull requires a PostHog personal API key (phx_). Set ${personalApiKeyEnv} with: growth env set --key ${personalApiKeyEnv} --stdin`,
+    );
+  }
+  if (!isPostHogPersonalApiKey(personalApiKey)) {
+    throw new GrowthError(
+      'wrong_key_class',
+      `${personalApiKeyEnv} contains "${personalApiKey.slice(0, 4)}..." which is not a personal API key (should start with phx_). Project tokens (phc_) cannot read events.`,
     );
   }
   const host = connector.posthog.host ?? POSTHOG_DEFAULT_HOST;
@@ -506,7 +526,7 @@ async function fetchPostHog(
 
     let url: string | null = `${host}/api/projects/${projectId}/events/?${params.toString()}`;
     while (url) {
-      const res = await fetch(url, { headers: { Authorization: `Bearer ${apiKey}` } });
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${personalApiKey}` } });
       if (!res.ok) {
         const text = await res.text();
         throw new GrowthError(

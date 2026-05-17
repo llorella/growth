@@ -20,6 +20,7 @@ export interface ConnectorConfig {
     host?: string;
     project_id?: string | number;
     api_key_env?: string;
+    personal_api_key_env?: string;
   };
   local?: {
     events_file: string;

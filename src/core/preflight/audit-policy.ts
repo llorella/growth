@@ -6,7 +6,7 @@ import {
 } from '../evidence/event-window.js';
 import { hasSyntheticTrafficLabels } from '../evidence/synthetic-traffic.js';
 import { requiredPreflightEvents } from './coverage.js';
-import type { AuditRecommendation, PreflightAudit, PreflightReportSummary } from './types.js';
+import type { AuditRecommendation, AuditRecommendationDetail, PreflightAudit, PreflightReportSummary } from './types.js';
 
 export const PREFLIGHT_AUDIT_CHECKS = {
   reportsAttached: 'reports_attached',
@@ -184,11 +184,13 @@ export function buildPreflightAudit(evidence: PreflightAuditEvidence): Preflight
     latestLocalVerification,
     providerBacked,
   });
+  const recommendation_detail = recommendationDetail(recommendation, checks);
 
   return {
     run_id: run.id,
     experiment_id: run.experiment_id,
     recommendation,
+    recommendation_detail,
     checks,
     reports,
     synthetic_only: true,
@@ -227,6 +229,56 @@ function recommendationFor(
   if (failed.has(PREFLIGHT_AUDIT_CHECKS.uxBlockers)) return 'fix_ux_blocker';
   if (opts.dryRun || !opts.providerBacked) return 'ready_for_provider_preflight';
   return 'provider_preflight_passed';
+}
+
+function recommendationDetail(
+  action: AuditRecommendation,
+  checks: PreflightAudit['checks'],
+): AuditRecommendationDetail {
+  const failed = checks.filter((c) => c.status === 'fail');
+  const failedIds = failed.map((c) => c.id);
+  const failedMessages = failed.map((c) => c.message).join(' ');
+
+  switch (action) {
+    case 'provider_preflight_passed':
+      return { action, summary: 'Provider-backed synthetic preflight passed all checks.' };
+    case 'ready_for_provider_preflight':
+      return { action, summary: 'Local checks passed. Run provider-backed preflight to confirm events ingest end-to-end.' };
+    case 'fix_app_instrumentation': {
+      const missingEventsCheck = failed.find((c) => c.id === PREFLIGHT_AUDIT_CHECKS.requiredEvents);
+      const missing = (missingEventsCheck?.evidence as Record<string, unknown>)?.reported_missing as string[] | undefined;
+      const observed = (missingEventsCheck?.evidence as Record<string, unknown>)?.observed as string[] | undefined;
+      const required = (missingEventsCheck?.evidence as Record<string, unknown>)?.required as string[] | undefined;
+      const unobserved = required?.filter((e) => !observed?.includes(e)) ?? [];
+      const allMissing = [...new Set([...unobserved, ...(missing ?? [])])];
+      return {
+        action,
+        summary: allMissing.length
+          ? `Fix app instrumentation to emit: ${allMissing.join(', ')}. Or add preflight scenarios that exercise those code paths.`
+          : `Fix app instrumentation. Failed checks: ${failedMessages}`,
+      };
+    }
+    case 'extend_preflight_coverage': {
+      const missingEventsCheck = failed.find((c) => c.id === PREFLIGHT_AUDIT_CHECKS.requiredEvents);
+      const missing = (missingEventsCheck?.evidence as Record<string, unknown>)?.reported_missing as string[] | undefined;
+      return {
+        action,
+        summary: missing?.length
+          ? `Static instrumentation verified, but preflight did not cover: ${missing.join(', ')}. Add scenarios that exercise those events.`
+          : `Static instrumentation verified, but some events were not observed during preflight. Add scenarios to cover them.`,
+      };
+    }
+    case 'fix_variant_reachability':
+      return { action, summary: `Not all variants were reachable during preflight. ${failedMessages}` };
+    case 'fix_ux_blocker':
+      return { action, summary: `UX blockers were reported during preflight. ${failedMessages}` };
+    case 'fix_blocker':
+      return { action, summary: `Access or environment blockers were reported. ${failedMessages}` };
+    case 'do_not_launch':
+      return { action, summary: `Critical issues found (${failedIds.join(', ')}). Do not launch until resolved.` };
+    default:
+      return { action, summary: failedMessages || 'Review audit checks.' };
+  }
 }
 
 function eventSummary(event: ExperimentEvent): Record<string, unknown> {

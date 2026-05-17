@@ -20,6 +20,8 @@ test('preflight audit policy passes provider-backed complete evidence', () => {
   });
 
   assert.equal(audit.recommendation, 'provider_preflight_passed');
+  assert.equal(audit.recommendation_detail.action, 'provider_preflight_passed');
+  assert.match(audit.recommendation_detail.summary, /passed all checks/);
   assert.equal(check(audit, PREFLIGHT_AUDIT_CHECKS.requiredEvents).status, 'pass');
   assert.equal(check(audit, PREFLIGHT_AUDIT_CHECKS.syntheticLabels).status, 'pass');
 });
@@ -39,6 +41,8 @@ test('preflight audit policy distinguishes local-only readiness', () => {
   });
 
   assert.equal(audit.recommendation, 'ready_for_provider_preflight');
+  assert.equal(audit.recommendation_detail.action, 'ready_for_provider_preflight');
+  assert.match(audit.recommendation_detail.summary, /provider-backed preflight/i);
 });
 
 test('preflight audit policy attributes missing required events after local verification', () => {
@@ -60,6 +64,8 @@ test('preflight audit policy attributes missing required events after local veri
 
   const required = check(audit, PREFLIGHT_AUDIT_CHECKS.requiredEvents);
   assert.equal(audit.recommendation, 'extend_preflight_coverage');
+  assert.equal(audit.recommendation_detail.action, 'extend_preflight_coverage');
+  assert.match(audit.recommendation_detail.summary, /Static instrumentation verified/);
   assert.equal(required.status, 'fail');
   assert.equal(required.evidence.attribution, 'synthetic_coverage_gap');
 });
@@ -82,6 +88,8 @@ test('preflight audit policy fails untrustworthy event window timestamps', () =>
 
   const timestamps = check(audit, PREFLIGHT_AUDIT_CHECKS.eventWindowTimestamps);
   assert.equal(audit.recommendation, 'fix_app_instrumentation');
+  assert.equal(audit.recommendation_detail.action, 'fix_app_instrumentation');
+  assert.match(audit.recommendation_detail.summary, /Fix app instrumentation/);
   assert.equal(timestamps.status, 'fail');
   assert.equal(timestamps.evidence.rejected[0].reason, 'invalid_timestamp');
 });
@@ -104,7 +112,44 @@ test('preflight audit policy blocks unlabeled synthetic evidence', () => {
   });
 
   assert.equal(audit.recommendation, 'do_not_launch');
+  assert.equal(audit.recommendation_detail.action, 'do_not_launch');
+  assert.match(audit.recommendation_detail.summary, /Critical issues found/);
   assert.equal(check(audit, PREFLIGHT_AUDIT_CHECKS.syntheticLabels).status, 'fail');
+});
+
+test('recommendation detail lists specific missing events for fix_app_instrumentation', () => {
+  const audit = buildPreflightAudit({
+    run: auditRun(),
+    experiment: auditExperiment(),
+    reports: [report('control'), report('treatment')],
+    events: [
+      event('experiment_viewed', 'control', 'agent-1'),
+      event('experiment_viewed', 'treatment', 'agent-2'),
+    ],
+    providerBacked: true,
+  });
+
+  assert.equal(audit.recommendation, 'fix_app_instrumentation');
+  assert.equal(audit.recommendation_detail.action, 'fix_app_instrumentation');
+  assert.match(audit.recommendation_detail.summary, /conversion_completed/);
+  assert.match(audit.recommendation_detail.summary, /Fix app instrumentation to emit/);
+});
+
+test('recommendation detail describes variant reachability failures', () => {
+  const audit = buildPreflightAudit({
+    run: auditRun(),
+    experiment: auditExperiment(),
+    reports: [report('control')],
+    events: [
+      event('experiment_viewed', 'control', 'agent-1'),
+      event('conversion_completed', 'control', 'agent-1'),
+    ],
+    providerBacked: true,
+  });
+
+  assert.equal(audit.recommendation, 'fix_variant_reachability');
+  assert.equal(audit.recommendation_detail.action, 'fix_variant_reachability');
+  assert.match(audit.recommendation_detail.summary, /Not all variants/);
 });
 
 function check(audit, id) {

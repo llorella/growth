@@ -4,6 +4,7 @@ import { assertConnectorCoverage } from '../../connectors/coverage.js';
 import { resolvePreflightPlan } from '../preflight/plan.js';
 import { SYNTHETIC_TRAFFIC_QUERY_PARAMS } from '../evidence/synthetic-traffic.js';
 import { GrowthError } from '../../lib/envelope.js';
+import { readEnvValue } from '../../lib/env-files.js';
 import { resolveAppUrl } from '../../lib/app-url.js';
 import { listConnectors } from '../../connectors/persistence.js';
 import { suggestedInstrumentationFiles, type FrameworkId } from '../../lib/framework.js';
@@ -59,7 +60,7 @@ export async function planInstrumentation(root: string, experimentId: string) {
       suggested_files: suggestedFiles,
       connector_event_shapes: connectors.map(connectorEventShape),
       preflight_query_params: SYNTHETIC_TRAFFIC_QUERY_PARAMS,
-      known_pitfalls: knownPitfalls(exp, projectProfile),
+      known_pitfalls: knownPitfalls(exp, connectors[0], projectProfile),
       reference_implementation: referenceImplementation(framework),
       prompt_packet: {
         summary: `Instrument ${exp.id} so assignments are stable and all required events include the growth properties.`,
@@ -148,6 +149,17 @@ export async function verifyInstrumentation(root: string, experimentId: string, 
       code: 'CONNECTOR_COVERAGE_GAP',
       message: 'No connector currently maps every event required by this experiment.',
     });
+  }
+  const posthogConnector = connectors.find((c) => c.kind === 'posthog');
+  if (posthogConnector && framework.startsWith('nextjs')) {
+    const clientTokenEnv = 'NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN';
+    const clientToken = await readEnvValue(root, clientTokenEnv);
+    if (!clientToken) {
+      warnings.push({
+        code: 'MISSING_CLIENT_ENV',
+        message: `Next.js client-side PostHog capture requires ${clientTokenEnv} to be set. Without it, posthog-js will not initialize and no browser events will be captured.`,
+      });
+    }
   }
   const endpointCheck = opts.endpoint
     ? await verifyEndpoint(opts.endpoint, sampleEvents(exp))

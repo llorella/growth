@@ -378,6 +378,71 @@ test('instrumentation plan uses custom events and root Next.js layout', () => {
   }
 });
 
+test('instrumentation plan includes bot detection pitfall for posthog connector', () => {
+  const root = tempRoot();
+  try {
+    run(root, ['init', '--framework', 'nextjs-app-router', '--json']);
+    run(root, ['connector', 'add', 'posthog', '--json']);
+    const spec = genericSpec({
+      id: 'bot-detect',
+      event: 'activation_completed',
+      denominatorEvent: 'experiment_viewed',
+    });
+    const specFile = path.join(root, 'spec.json');
+    writeFileSync(specFile, JSON.stringify(spec));
+    run(root, ['experiment', 'create', 'bot-detect', '--from-file', specFile, '--json']);
+
+    const plan = run(root, ['instrumentation', 'plan', 'bot-detect', '--json']);
+    assert.equal(
+      plan.data.known_pitfalls.some((pitfall) => pitfall.id === 'posthog-bot-detection'),
+      true,
+    );
+    assert.equal(
+      plan.data.known_pitfalls.find((p) => p.id === 'posthog-bot-detection').applies_to,
+      'synthetic-browser-preflight',
+    );
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('instrumentation verify warns about missing client-side env for nextjs posthog', () => {
+  const root = tempRoot();
+  try {
+    mkdirSync(path.join(root, 'app'), { recursive: true });
+    writeFileSync(
+      path.join(root, 'package.json'),
+      JSON.stringify({ dependencies: { next: '^15.0.0' } }) + '\n',
+    );
+    run(root, ['init', '--framework', 'nextjs-app-router', '--json']);
+    writeFileSync(
+      path.join(root, '.env'),
+      ['POSTHOG_ANALYTICS_API_KEY=phc_test', 'POSTHOG_ANALYTICS_HOST=https://us.posthog.com', ''].join('\n'),
+    );
+    run(root, ['connector', 'import', 'stripe-projects', '--json']);
+    const spec = genericSpec({
+      id: 'client-env',
+      event: 'activation_completed',
+      denominatorEvent: 'experiment_viewed',
+    });
+    const specFile = path.join(root, 'spec.json');
+    writeFileSync(specFile, JSON.stringify(spec));
+    run(root, ['experiment', 'create', 'client-env', '--from-file', specFile, '--json']);
+
+    const verify = run(root, ['instrumentation', 'verify', 'client-env', '--json']);
+    assert.equal(
+      verify.warnings.some((w) => w.code === 'MISSING_CLIENT_ENV'),
+      true,
+    );
+    assert.equal(
+      verify.warnings.find((w) => w.code === 'MISSING_CLIENT_ENV').message.includes('NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN'),
+      true,
+    );
+  } finally {
+    cleanup(root);
+  }
+});
+
 test('instrumentation plan flags anonymous assignment on authenticated targeting', () => {
   const root = tempRoot();
   try {
@@ -607,6 +672,7 @@ test('preflight plan uses provider-backed connector when PostHog is ready', () =
         'POSTHOG_ANALYTICS_API_KEY=phc_test',
         'POSTHOG_ANALYTICS_HOST=https://us.posthog.com',
         'POSTHOG_PROJECT_ID=123',
+        'POSTHOG_PERSONAL_API_KEY=phx_test',
         '',
       ].join('\n'),
     );
@@ -755,7 +821,8 @@ test('instrumentation verify does not mark preflight ready when provider pull is
     assert.equal(plan.data.plan.evidence.available_sources[0].provider_pull_ready, false);
     assert.equal(plan.data.plan.evidence.blocked_sources[0].capability, 'provider_pull');
     assert.equal(
-      plan.data.plan.evidence.blocked_sources[0].reason.includes('app telemetry is configured'),
+      plan.data.plan.evidence.blocked_sources[0].reason.includes('app telemetry is configured') ||
+      plan.data.plan.evidence.blocked_sources[0].reason.includes('read-side'),
       true,
     );
     assert.equal(plan.data.plan.evidence.blocked_sources[0].manual_input_required, true);
@@ -834,6 +901,7 @@ test('preflight prepare uses project profile route and keeps provider evidence a
         'POSTHOG_ANALYTICS_API_KEY=phc_test',
         'POSTHOG_ANALYTICS_HOST=https://us.posthog.com',
         'POSTHOG_PROJECT_ID=123',
+        'POSTHOG_PERSONAL_API_KEY=phx_test',
         '',
       ].join('\n'),
     );
@@ -1614,6 +1682,33 @@ test('env set rejects empty stdin values', () => {
   }
 });
 
+test('posthog auth check warns when personal api key env holds a project token', () => {
+  const root = tempRoot();
+  try {
+    run(root, ['init', '--json']);
+    writeFileSync(
+      path.join(root, '.env'),
+      [
+        'POSTHOG_ANALYTICS_API_KEY=phc_write',
+        'POSTHOG_PERSONAL_API_KEY=phc_wrong_class',
+        'POSTHOG_PROJECT_ID=123',
+        '',
+      ].join('\n'),
+    );
+    run(root, ['connector', 'import', 'stripe-projects', '--json']);
+
+    const auth = run(root, ['connector', 'auth', 'check', 'posthog', '--json']);
+    assert.equal(auth.data.personal_api_key_present, true);
+    assert.equal(auth.data.capabilities.provider_pull.ready, false);
+    assert.equal(
+      auth.data.capabilities.provider_pull.warnings.some((w) => w.includes('phx_')),
+      true,
+    );
+  } finally {
+    cleanup(root);
+  }
+});
+
 test('posthog connector uses variant_id canonically while accepting legacy variant fallback', () => {
   const root = tempRoot();
   try {
@@ -1770,8 +1865,8 @@ test('stripe projects import recognizes prefixed posthog env output', () => {
     assert.equal(auth.data.api_key_present, true);
     assert.equal(auth.data.capabilities.telemetry_write.ready, true);
     assert.equal(auth.data.capabilities.provider_pull.ready, false);
-    assert.deepEqual(auth.data.capabilities.provider_pull.missing, ['project_id']);
-    assert.deepEqual(auth.data.missing, ['project_id']);
+    assert.deepEqual(auth.data.capabilities.provider_pull.missing, ['personal_api_key', 'project_id']);
+    assert.deepEqual(auth.data.missing, ['personal_api_key', 'project_id']);
     assert.equal(auth.data.setup_command, 'growth connector auth setup posthog --json');
     assert.equal(auth._next.command, 'growth connector auth setup posthog --json');
 
@@ -1782,14 +1877,23 @@ test('stripe projects import recognizes prefixed posthog env output', () => {
     assert.equal(setup.data.manual_input_required, true);
     assert.equal(setup.data.telemetry_write_ready, true);
     assert.equal(setup.data.provider_pull_ready, false);
-    assert.deepEqual(setup.data.safe_commands, ['growth env set --key POSTHOG_PROJECT_ID --stdin']);
+    assert.deepEqual(setup.data.safe_commands, [
+      'growth env set --key POSTHOG_PERSONAL_API_KEY --stdin',
+      'growth env set --key POSTHOG_PROJECT_ID --stdin',
+    ]);
     assert.equal(setup.data.retry_command, 'growth connector auth check posthog --json');
     assert.equal(setup.data.stop_reason.includes('Stop automated provider preflight'), true);
-    assert.equal(setup.data.missing_requirements.length, 1);
-    assert.equal(setup.data.missing_requirements[0].id, 'posthog-provider-pull-project-id');
+    assert.equal(setup.data.missing_requirements.length, 2);
+    assert.equal(setup.data.missing_requirements[0].id, 'posthog-personal-api-key');
     assert.equal(setup.data.missing_requirements[0].capability, 'provider_pull');
-    assert.equal(setup.data.missing_requirements[0].env, 'POSTHOG_PROJECT_ID');
+    assert.equal(setup.data.missing_requirements[0].env, 'POSTHOG_PERSONAL_API_KEY');
     assert.deepEqual(setup.data.missing_requirements[0].safe_commands, [
+      'growth env set --key POSTHOG_PERSONAL_API_KEY --stdin',
+    ]);
+    assert.equal(setup.data.missing_requirements[1].id, 'posthog-provider-pull-project-id');
+    assert.equal(setup.data.missing_requirements[1].capability, 'provider_pull');
+    assert.equal(setup.data.missing_requirements[1].env, 'POSTHOG_PROJECT_ID');
+    assert.deepEqual(setup.data.missing_requirements[1].safe_commands, [
       'growth env set --key POSTHOG_PROJECT_ID --stdin',
     ]);
     assert.equal(setup.data.policy.do_not_read_env_files_directly, true);
