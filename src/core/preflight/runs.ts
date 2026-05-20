@@ -41,6 +41,70 @@ export async function writeRun(root: string, run: GrowthRun): Promise<void> {
   await fs.writeFile(path.join(paths(root).runsDir, run.id, 'run.json'), JSON.stringify(run, null, 2) + '\n');
 }
 
+export async function execPreflightAgent(
+  root: string,
+  runId: string,
+  opts: { agent: number },
+) {
+  const run = await readRun(root, runId);
+  const agentIndex = opts.agent - 1;
+  const agent = run.agents?.[agentIndex];
+  if (!agent) {
+    throw new GrowthError('agent_not_found', `Agent ${opts.agent} is not part of ${runId}.`);
+  }
+  const p = paths(root);
+  const packetUrl = (await fs.readFile(path.join(root, agent.url_file), 'utf8')).trim();
+  const prompt = await fs.readFile(path.join(root, agent.prompt_file), 'utf8');
+  const policy = JSON.parse(await fs.readFile(path.join(root, agent.policy_file), 'utf8'));
+  const reportSchema = JSON.parse(await fs.readFile(path.join(root, agent.report_schema_file), 'utf8'));
+  const reportPath = path.join(p.runsDir, runId, 'reports', `agent-${opts.agent}.report.json`);
+  const screenshotPath = path.join(p.runsDir, runId, `agent-${opts.agent}-screenshot.png`);
+  const reportFile = path.relative(root, reportPath);
+  const totalAgents = run.agents?.length ?? 0;
+  const attachCommand = `growth preflight attach-report ${runId} --agent ${opts.agent} --file ${reportFile} --json`;
+
+  return {
+    data: {
+      run_id: runId,
+      agent: opts.agent,
+      total_agents: totalAgents,
+      agent_id: agent.agent_id,
+      variant_id: agent.variant_id ?? null,
+      packet_url: packetUrl,
+      scenario: policy.scenario ?? null,
+      expected_events: policy.expected_events ?? [],
+      instructions: prompt,
+      browser_context: policy.browser_context ?? {},
+      browser: {
+        open: `agent-browser open "${packetUrl}"`,
+        inspect: 'agent-browser snapshot -i',
+        screenshot: `agent-browser screenshot ${path.relative(root, screenshotPath)}`,
+      },
+      report_schema: reportSchema,
+      report_file: reportFile,
+      attach_command: attachCommand,
+    },
+    humanText: [
+      `Agent ${opts.agent}/${totalAgents} for ${runId}`,
+      `Variant: ${agent.variant_id ?? 'unassigned'}`,
+      `URL: ${packetUrl}`,
+      '',
+      'Run with agent-browser:',
+      `  agent-browser open "${packetUrl}"`,
+      '  agent-browser snapshot -i',
+      '  (interact with the app following the scenario)',
+      `  agent-browser screenshot ${path.relative(root, screenshotPath)}`,
+      '',
+      `Write report to ${reportFile} matching the report_schema, then:`,
+      `  ${attachCommand}`,
+    ].join('\n'),
+    next: {
+      command: attachCommand,
+      until: `agent ${opts.agent} report is written to ${reportFile}`,
+    },
+  };
+}
+
 export async function attachPreflightReport(
   root: string,
   runId: string,
@@ -68,6 +132,8 @@ export async function attachPreflightReport(
   run.artifacts[`agent_${opts.agent}_report`] = path.relative(root, target);
   await writeRun(root, run);
   const agent = run.agents[opts.agent - 1];
+  const totalAgents = run.agents.length;
+  const nextAgent = opts.agent < totalAgents ? opts.agent + 1 : null;
   return {
     data: {
       status: 'attached',
@@ -80,10 +146,15 @@ export async function attachPreflightReport(
       report_summary: summarizeReport(report as unknown as PreflightReportSummary),
     },
     humanText: `Attached report for agent ${opts.agent} to ${runId}.`,
-    next: {
-      command: `growth preflight complete ${runId} --json`,
-      until: 'all agent reports are attached and the preflight window can be closed',
-    },
+    next: nextAgent
+      ? {
+          command: `growth preflight exec ${runId} --agent ${nextAgent} --json`,
+          until: `agent ${nextAgent} browser session and report`,
+        }
+      : {
+          command: `growth preflight complete ${runId} --json`,
+          until: 'all agent reports are attached and the preflight window can be closed',
+        },
   };
 }
 

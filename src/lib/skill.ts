@@ -119,13 +119,19 @@ const WORKFLOWS: Record<string, string> = {
   'run-preflight.md': `# Run Preflight
 
 1. Run \`growth preflight plan <id> --json\`.
-2. Follow the returned \`_next.command\`.
-3. If \`browser_context.requires_authenticated_session=true\`, use an authenticated browser session for packet execution and report login/paywall blockers explicitly.
-4. If Growth prepares packets, note \`event_window.after\`; events before that timestamp are intentionally excluded from \`growth preflight pull\`.
-5. Launch each generated packet with \`agent-browser\`. Run \`agent-browser open <packet_url>\`, then use \`agent-browser snapshot -i\` and \`agent-browser click/fill/type\` to interact. Take screenshots with \`agent-browser screenshot\` for the report.
-6. Attach reports with \`growth preflight attach-report <run_id> --agent <n> --file <report.json> --json\`.
-7. Complete with \`growth preflight complete <run_id> --json\`.
-8. Pull and audit using the source selected by Growth.
+2. Follow the returned \`_next.command\`; it will lead to \`growth preflight run\` when ready.
+3. After \`preflight run\` prepares packets, follow \`_next\` to \`growth preflight exec <run_id> --agent 1 --json\`.
+4. The \`exec\` command returns the packet URL, scenario, and exact \`agent-browser\` commands:
+   - \`agent-browser open "<packet_url>"\` to start the browser session.
+   - \`agent-browser snapshot -i\` to see interactive elements.
+   - \`agent-browser click/fill/type\` to interact with the app.
+   - \`agent-browser screenshot\` to capture evidence.
+5. After driving the browser, write a report JSON matching the \`report_schema\` from exec output.
+6. Attach with the returned \`_next.command\`, which matches \`attach_command\`.
+7. After attaching, follow \`_next\`; it chains to the next agent's exec, or to \`complete\` after the last agent.
+8. After complete, follow \`_next\` to pull and audit.
+
+The full \`_next\` chain is: plan -> run -> exec 1 -> attach 1 -> exec 2 -> attach 2 -> ... -> complete -> pull -> audit.
 `,
 };
 

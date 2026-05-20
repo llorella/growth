@@ -19,6 +19,7 @@ import {
   completeLocalPreflightRun,
   completePreflightRun,
   dryRunPreflight,
+  execPreflightAgent,
   pullPreflightRun,
   readRun,
 } from '../core/preflight/runs.js';
@@ -163,6 +164,17 @@ export function registerPreflight(program: Command, ctx: RunCtx): void {
         await requireInitialized(ctx.getRoot());
         const run = await readRun(ctx.getRoot(), runId);
         return { data: { run }, humanText: JSON.stringify(run, null, 2) };
+      });
+    });
+
+  preflight
+    .command('exec <run_id>')
+    .description('Return execution context for one agent packet, including agent-browser commands.')
+    .requiredOption('--agent <n>', 'Agent number (1-based).', (v) => parseInt(v, 10))
+    .action(async (runId: string, opts: { agent: number }) => {
+      await wrap(`${commandPrefix} exec`, ctx, async () => {
+        await requireInitialized(ctx.getRoot());
+        return execPreflightAgent(ctx.getRoot(), runId, opts);
       });
     });
 

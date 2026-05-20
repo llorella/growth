@@ -688,7 +688,12 @@ test('preflight plan uses provider-backed connector when PostHog is ready', () =
     const preflight = run(root, ['preflight', 'run', 'provider-plan', '--agents', '1', '--browser', '--json']);
     assert.equal(preflight.data.status, 'prepared');
     assert.equal(preflight.data.preflight_plan.evidence.preferred_evidence, 'posthog');
-    assert.match(preflight._next.command, /growth preflight complete /);
+    assert.match(preflight._next.command, /growth preflight exec .* --agent 1 --json/);
+
+    const exec = run(root, ['preflight', 'exec', preflight.data.run.id, '--agent', '1', '--json']);
+    assert.equal(exec.data.report_file.endsWith('agent-1.report.json'), true);
+    assert.equal(exec._next.command, exec.data.attach_command);
+    assert.match(exec._next.command, /growth preflight attach-report .* --agent 1 .* --json/);
   } finally {
     cleanup(root);
   }
@@ -928,7 +933,7 @@ test('preflight prepare uses project profile route and keeps provider evidence a
     assert.equal(preflight.data.packet_app_url, 'http://localhost:3000/onboarding');
     assert.equal(preflight.warnings.some((warning) => warning.code === 'TARGET_ROUTE_APPLIED'), true);
     assert.equal(preflight.warnings.some((warning) => warning.code === 'AUTHENTICATED_BROWSER_CONTEXT'), true);
-    assert.match(preflight._next.command, /growth preflight complete /);
+    assert.match(preflight._next.command, /growth preflight exec .* --agent 1 --json/);
     assert.doesNotMatch(preflight._next.command, /complete-local/);
     const packetUrl = readFileSync(
       path.join(root, '.growth', 'runs', preflight.data.run.id, 'agent-packets', 'agent-1.url.txt'),
@@ -1149,7 +1154,7 @@ test('preflight complete-local finishes prepared run from synthetic JSONL events
     run(root, ['experiment', 'create', 'onboarding-flow', '--template', 'onboarding-activation', '--json']);
     run(root, ['connector', 'add', 'local', '--events-file', 'tmp/preflight-events.jsonl', '--json']);
     const preflight = run(root, ['preflight', 'prepare', 'onboarding-flow', '--agents', '2', '--json']);
-    assert.match(preflight._next.command, /growth preflight complete-local/);
+    assert.match(preflight._next.command, /growth preflight exec .* --agent 1 --json/);
     mkdirSync(path.join(root, 'tmp'), { recursive: true });
     const events = [];
     const eventTimestamp = preflight.data.run.event_window.after;
@@ -1438,7 +1443,7 @@ test('preflight command is primary and returns structured audit and continuation
     const preflight = run(root, ['preflight', 'prepare', 'onboarding-flow', '--agents', '2', '--json']);
     assert.match(preflight.data.run.id, /^preflight_/);
     assert.equal(preflight.data.run.type, 'preflight');
-    assert.match(preflight._next.command, /growth preflight complete-local/);
+    assert.match(preflight._next.command, /growth preflight exec .* --agent 1 --json/);
 
     for (let i = 1; i <= 2; i++) {
       const report = path.join(root, `report-${i}.json`);

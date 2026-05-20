@@ -342,26 +342,14 @@ function nextAfterPacketExecution(run: GrowthRun, plan: PreflightPlan) {
       },
     };
   }
-  if (preferredEvidence?.provider_backed) {
-    return {
-      nextSteps: [
-        `Complete with growth preflight complete ${run.id} --json after reports are attached.`,
-        'Growth will then pull provider-backed synthetic events before audit.',
-      ],
-      next: {
-        command: `growth preflight complete ${run.id} --json`,
-        until: 'browser-agent reports are attached and provider-backed events can be pulled',
-      },
-    };
-  }
   return {
     nextSteps: [
-      `If browser execution writes local JSONL, complete in one step with growth preflight complete-local ${run.id} --events-file <events.jsonl> --json.`,
-      `Otherwise attach reports and complete with growth preflight complete ${run.id} --json.`,
+      `Execute agent 1 with growth preflight exec ${run.id} --agent 1 --json.`,
+      'Follow the _next chain through each agent, then complete.',
     ],
     next: {
-      command: `growth preflight complete-local ${run.id} --events-file <events.jsonl> --json`,
-      until: 'synthetic browser events are attached and local launch-readiness audit is written',
+      command: `growth preflight exec ${run.id} --agent 1 --json`,
+      until: 'agent 1 browser session is started with agent-browser',
     },
   };
 }
